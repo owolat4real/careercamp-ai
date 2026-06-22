@@ -132,6 +132,35 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Root info — visible in browser so you know the gateway is live
+app.get('/', (req, res) => {
+  res.json({
+    service: 'CareerCamp AI Gateway',
+    version: '1.0.0',
+    status:  'online',
+    docs:    'https://github.com/owolat4real/careercamp-ai',
+    endpoints: ['/health', '/v1/models', '/v1/chat/completions', '/v1/embeddings', '/v1/bert', '/v1/images', '/v1/audio'],
+  });
+});
+
+app.get('/v1', (req, res) => {
+  res.json({
+    service: 'CareerCamp AI Gateway — OpenAI-compatible API',
+    version: '1.0.0',
+    status:  'online',
+    routes: {
+      models:      'GET  /v1/models',
+      chat:        'POST /v1/chat/completions',
+      embeddings:  'POST /v1/embeddings',
+      bert:        'POST /v1/bert/extract',
+      vision:      'POST /v1/images/analyze',
+      audio:       'POST /v1/audio/transcribe',
+      agent:       'POST /v1/agent/run',
+    },
+    auth: 'Authorization: Bearer YOUR_CAREERCAMP_API_KEY',
+  });
+});
+
 app.get('/v1/models', apiKeyAuth, (req, res, next) => {
   req.engines = app.locals.engines;
   next();
