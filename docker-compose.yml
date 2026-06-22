@@ -1,0 +1,211 @@
+version: '3.9'
+
+# ═══════════════════════════════════════════════════════════════════════
+# CAREERCAMP AI — Full Stack Docker Compose
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Services:
+#   careercamp-gateway   — Node.js API gateway (port 3002)
+#   careercamp-ml        — Python ML server  (port 3003)
+#   ollama               — Local LLM server  (port 11434)
+#   nginx                — Reverse proxy / DNS (ports 80, 443)
+#   careerstudio-app     — Main Career Studio app (port 3001)
+#   redis                — Session cache
+#   mongo                — Local MongoDB (or connect to Atlas)
+#
+# Start:
+#   docker-compose up -d                     # all services
+#   docker-compose up -d careercamp-gateway  # gateway only
+#   docker-compose up ollama                 # LLM server
+#
+# GPU support:
+#   docker-compose --profile gpu up careercamp-ml
+#
+# ═══════════════════════════════════════════════════════════════════════
+
+name: careerstudio-ai
+
+networks:
+  careernet:
+    driver: bridge
+
+volumes:
+  ollama_data:
+  ml_models:
+  redis_data:
+  mongo_data:
+  nginx_certs:
+
+services:
+
+  # ── CareerCamp AI Gateway (Node.js) ─────────────────────
+  careercamp-gateway:
+    build:
+      context:    .
+      dockerfile: Dockerfile
+    image: careerstudio/careercamp-gateway:latest
+    container_name: careercamp-gateway
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - CAREERCAMP_PORT=3002
+      - OLLAMA_URL=http://ollama:11434
+      - ML_SERVER_URL=http://careercamp-ml:3003
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - CAREERCAMP_API_KEY=${CAREERCAMP_API_KEY}
+      - CS_TRANSFORMER_API_KEY=${CS_TRANSFORMER_API_KEY}
+      - INTERNAL_SECRET=${INTERNAL_SECRET:-careercamp-internal-2025}
+    volumes:
+      - ml_models:/app/models
+    networks:
+      - careernet
+    depends_on:
+      - ollama
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      interval: 30s
+      timeout:  10s
+      retries:  3
+
+  # ── Python ML Server ─────────────────────────────────────
+  careercamp-ml:
+    build:
+      context:    .
+      dockerfile: Dockerfile.py
+    image: careerstudio/careercamp-ml:latest
+    container_name: careercamp-ml
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      - ML_SERVER_PORT=3003
+      - DEVICE=cpu
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      - ml_models:/app/models
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    networks:
+      - careernet
+    profiles: ["full", "ml"]
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+
+  # ── Python ML Server (GPU variant) ───────────────────────
+  careercamp-ml-gpu:
+    build:
+      context:    .
+      dockerfile: Dockerfile.py
+    image: careerstudio/careercamp-ml-gpu:latest
+    container_name: careercamp-ml-gpu
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      - ML_SERVER_PORT=3003
+      - DEVICE=cuda
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      - ml_models:/app/models
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    networks:
+      - careernet
+    profiles: ["gpu"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count:  1
+              capabilities: [gpu]
+
+  # ── Ollama (local LLM server) ─────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - careernet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout:  5s
+      retries:  3
+
+  # ── Ollama model puller (runs once on startup) ────────────
+  ollama-setup:
+    image: ollama/ollama:latest
+    container_name: ollama-setup
+    restart: "no"
+    depends_on:
+      - ollama
+    command: >
+      sh -c "
+        sleep 10 &&
+        ollama pull tinyllama:1.1b &&
+        ollama pull mistral:7b &&
+        ollama pull llava:7b &&
+        echo 'Ollama models ready'
+      "
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    networks:
+      - careernet
+    profiles: ["setup"]
+
+  # ── Career Studio App ────────────────────────────────────
+  careerstudio-app:
+    build:
+      context:  ../cs_fixed
+      dockerfile: Dockerfile
+    image: careerstudio/app:latest
+    container_name: careerstudio-app
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - CAMP_API_URL=http://careercamp-gateway:3002/v1
+      - CAREERCAMP_BASE_URL=http://careercamp-gateway:3002/v1
+      - MONGODB_URI=${MONGODB_URI}
+      - JWT_SECRET=${JWT_SECRET}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    networks:
+      - careernet
+    depends_on:
+      - careercamp-gateway
+    profiles: ["full", "app"]
+
+  # ── Nginx reverse proxy ───────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/careerstudio.conf:/etc/nginx/conf.d/careerstudio.conf:ro
+      - nginx_certs:/etc/letsencrypt
+    networks:
+      - careernet
+    depends_on:
+      - careercamp-gateway
+      - careerstudio-app
+    profiles: ["full", "prod"]

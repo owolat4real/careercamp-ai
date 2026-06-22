@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: careercamp-ai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CAREERCAMP_PORT
+        value: 3002
+
+      # Allow Groq/OpenRouter as LLM backend (Ollama not available on Render)
+      - key: ALLOW_EXTERNAL_AI
+        value: "true"
+
+      # Auth key — cs_fixed uses this to authenticate to this gateway
+      # Set to same value as CAREERCAMP_API_KEY in your cs_fixed Render service
+      - key: CAREERCAMP_API_KEY
+        sync: false
+      - key: CS_TRANSFORMER_API_KEY
+        sync: false
+      - key: CAREERCAMP_SECRET_KEY
+        sync: false
+      - key: INTERNAL_SECRET
+        sync: false
+
+      # Ollama — not available on Render; gateway falls through to external AI
+      - key: OLLAMA_URL
+        value: "http://localhost:11434"
+      - key: ML_SERVER_URL
+        value: "http://localhost:3003"
+
+      # External AI providers (fallback when Ollama offline)
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: meta-llama/llama-3.3-70b-instruct:free
+
+      # Internet grounding
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+
+      # Voice / media
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+
+      # CORS — set to your cs_fixed Render URL after first deploy
+      - key: ALLOWED_ORIGINS
+        sync: false

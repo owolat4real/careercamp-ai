@@ -1,0 +1,12 @@
+node_modules/
+.env
+models/.cache/
+models/whisper/
+*.gguf
+*.bin
+*.safetensors
+__pycache__/
+*.pyc
+.DS_Store
+logs/
+*.log
