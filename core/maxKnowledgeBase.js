@@ -6,6 +6,7 @@
    in FEATURE_MAP, Max cannot describe it.
 ═══════════════════════════════════════════════════════════════════ */
 const { FEATURE_MAP } = require('../config/featureMap');
+const { PRODUCT_AREAS } = require('../config/productAreas');
 
 /* ── ID → human-readable title ─────────────────────────────────── */
 function toTitle(id) {
@@ -62,7 +63,7 @@ const TASK_DESCRIPTIONS = {
 
 /* ── BUILD KNOWLEDGE BASE ─────────────────────────────────────────── */
 function buildKnowledgeBase() {
-  const features = Object.entries(FEATURE_MAP).map(([id, cfg]) => {
+  const aiTaskFeatures = Object.entries(FEATURE_MAP).map(([id, cfg]) => {
     const domain = inferDomain(id, cfg.task);
     const desc   = TASK_DESCRIPTIONS[cfg.task] || 'An AI-powered career tool.';
     return {
@@ -77,6 +78,24 @@ function buildKnowledgeBase() {
       plan:        cfg.model === 'cs-sonnet' ? 'pro' : 'free',
     };
   });
+
+  /* Product areas — whole sections of the platform (calendars, research
+     systems, marketplaces, simulators, community hubs, CRUD trackers)
+     that aren't a single AI-task call, so they have no FEATURE_MAP entry.
+     Additive only — merged in alongside the AI-task features above. */
+  const productAreaFeatures = PRODUCT_AREAS.map(area => ({
+    id:          area.id,
+    title:       area.title,
+    description: area.description,
+    domain:      area.domain,
+    task:        null,
+    model:       null,
+    streaming:   false,
+    path:        area.path,
+    plan:        'platform',
+  }));
+
+  const features = [...aiTaskFeatures, ...productAreaFeatures];
 
   /* Nav sections derived from real domain groupings */
   const domainSet = [...new Set(features.map(f => f.domain))];
