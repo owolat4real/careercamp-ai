@@ -9,7 +9,7 @@ const { FOUNDER_KNOWLEDGE_BLOCK } = require('../../core/founderIdentity');
 
 const ESCALATION_PHRASE = "I'll connect you with our support team on this.";
 
-function buildMaxSystemPrompt(retrievedFeatures, currentPage, userName) {
+function buildMaxSystemPrompt(retrievedFeatures, currentPage, userName, langName) {
   const name = userName ? `, ${userName}` : '';
 
   const featureContext = retrievedFeatures.length
@@ -18,7 +18,12 @@ function buildMaxSystemPrompt(retrievedFeatures, currentPage, userName) {
       ).join('\n\n')
     : 'No specific features matched this question.';
 
+  const languageInstruction = (langName && langName !== 'English')
+    ? `\nLANGUAGE: The user has set their platform language to ${langName}. Respond ENTIRELY in ${langName} — every sentence, naturally and fluently, not a literal word-for-word translation. The one exception: if you escalate, output the exact English phrase given below verbatim (it's a fixed trigger string the platform detects, not something to translate).\n`
+    : '';
+
   return `You are Max, the voice guide built into CareerStudioMax. You help users${name} navigate and get the best from the platform.
+${languageInstruction}
 
 ${FOUNDER_KNOWLEDGE_BLOCK}
 
