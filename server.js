@@ -33,6 +33,10 @@
 'use strict';
 require('dotenv').config();
 
+// Validate optional core modules before any route import can crash the server.
+// Missing optional modules log a warning and return safe fallbacks — never crash.
+require('./core/startupGuard').validateStartup();
+
 const express    = require('express');
 const cors       = require('cors');
 const helmet     = require('helmet');
@@ -86,6 +90,22 @@ const audioRoute        = require('./api/audio');
 const modelsRoute       = require('./api/models');
 const bertRoute         = require('./api/bert');
 const agentRoute        = require('./api/agent');
+
+// ── Local-First AI Platform routes (v2.0) ─────────────────
+const inferenceRoute    = require('./routes/inference');
+const featuresRoute     = require('./routes/features');
+const toolsRoute        = require('./routes/tools');
+const memoryRoute       = require('./routes/memory');
+const developerRoute    = require('./routes/developer');
+const campRoute         = require('./routes/camp');
+const { warmAll }       = require('./engine/modelWarmer');
+const { metrics }       = require('./engine/inferenceEngine');
+const { startKeepWarm } = require('./core/keepWarm');
+const perfMonitor       = require('./core/perfMonitor');
+const { runStartupAudit } = require('./core/gpuAudit');
+const gpuResidency        = require('./core/gpuResidency');
+const gpuScheduler        = require('./core/gpuScheduler');
+const { getFreeVRAM }     = require('./core/vramTuner');
 
 // ── Attach engines to app for routes ──────────────────────
 app.locals.engines = {
@@ -156,6 +176,11 @@ app.get('/v1', (req, res) => {
       vision:      'POST /v1/images/analyze',
       audio:       'POST /v1/audio/transcribe',
       agent:       'POST /v1/agent/run',
+      infer:       'POST /v1/infer',
+      features:    'POST /v1/features/:featureId',
+      tools:       'POST /v1/tools/:toolId',
+      memory:      'GET|POST|DELETE /v1/memory/:userId',
+      developer:   'GET  /v1/developer/health|status|metrics|docs',
     },
     auth: 'Authorization: Bearer YOUR_CAREERCAMP_API_KEY',
   });
@@ -175,6 +200,48 @@ app.use('/v1/audio',             apiKeyAuth, (req, _, next) => { req.engines = a
 // ── CareerCamp-specific routes ─────────────────────────────
 app.use('/v1/bert',   apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, bertRoute);
 app.use('/v1/agent',  apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, agentRoute);
+
+// ── Local-First AI Platform v2.0 routes ───────────────────
+app.use('/v1/infer',      inferenceRoute);
+app.use('/v1/features',   featuresRoute);
+app.use('/v1/tools',      toolsRoute);
+app.use('/v1/memory',     memoryRoute);
+app.use('/v1/developer',  developerRoute);
+app.use('/v1/camp',       campRoute);     // 274-feature map pipeline (PII+memory+ethics+reasoning)
+
+// GPU Resource Manager status — internal use
+app.get('/v1/gpu-status', async (req, res) => {
+  const key   = req.headers['x-api-key'] || (req.headers.authorization || '').replace('Bearer ', '');
+  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
+  if (valid && key !== valid) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const freeVramMB = await getFreeVRAM();
+    res.json({
+      success:     true,
+      freeVramMB,
+      residency:   gpuResidency.getStatus(),
+      scheduler:   gpuScheduler.getLoad(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Performance stats — internal use
+app.get('/v1/perf', (req, res) => {
+  const key   = req.headers['x-api-key'] || (req.headers.authorization || '').replace('Bearer ', '');
+  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
+  if (valid && key !== valid) return res.status(401).json({ error: 'unauthorized' });
+  res.json({ success: true, ...perfMonitor.getStats() });
+});
+
+// Aggregate metrics endpoint (no auth — already gated inside router)
+app.get('/metrics', (req, res) => {
+  const key = req.headers['x-api-key'] || req.headers.authorization?.replace('Bearer ', '');
+  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
+  if (valid && key !== valid) return res.status(401).json({ error: 'unauthorized' });
+  res.json({ success: true, ...metrics.getDetailed() });
+});
 
 // ── Vision endpoint alias ──────────────────────────────────
 app.post('/v1/vision/analyze', apiKeyAuth, (req, res, next) => {
@@ -201,6 +268,13 @@ async function boot() {
   console.log('║  CareerCamp AI — World-First Career Intelligence     ║');
   console.log('║  LLM · VLM · Voice · BERT · Multimodal · Internet   ║');
   console.log('╚══════════════════════════════════════════════════════╝\n');
+
+  // GPU capacity audit — prints real layer counts before first request
+  await runStartupAudit();
+
+  // Warm local models (non-blocking — server starts regardless)
+  warmAll().catch(() => {});
+  startKeepWarm();  // heartbeat: ping cs-haiku + cs-sonnet every 4 min to prevent VRAM unload
 
   // Initialise engines in parallel
   const results = await Promise.allSettled([

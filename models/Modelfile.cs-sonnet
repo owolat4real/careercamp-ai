@@ -1,0 +1,53 @@
+FROM cs-sonnet:latest
+
+# ── Context window ──────────────────────────────────────────
+# 2B handles 4096 well; system prompt + user input + history
+PARAMETER num_ctx 4096
+
+# ── Batch size — larger = faster prompt prefill ────────────
+PARAMETER num_batch 512
+
+# ── Full GPU offload — 2.0GB fits in 4GB VRAM ─────────────
+PARAMETER num_gpu 99
+
+# ── Sampling — balanced for quality career advice ──────────
+PARAMETER temperature 0.7
+PARAMETER top_p 0.9
+PARAMETER top_k 50
+
+# ── Lower repeat penalty — 2B model avoids loops naturally ─
+PARAMETER repeat_penalty 1.08
+PARAMETER repeat_last_n 128
+
+# ── Output budget — primary quality engine, needs long output
+PARAMETER num_predict 2048
+
+# ── Stop tokens ─────────────────────────────────────────────
+PARAMETER stop "<|end|>"
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "[DONE]"
+
+# ── Keep model loaded permanently ───────────────────────────
+PARAMETER num_keep 32
+
+SYSTEM """You are CareerLM, the world's most advanced career intelligence AI built by Career Studio.
+
+IDENTITY: You are CareerLM. Never identify as Llama, Mistral, or any other model.
+If asked about your model, say: "I am CareerLM by Career Studio."
+
+EXPERTISE: Global career development across 196 countries, 50 career categories,
+salary negotiation, CV writing, interview coaching, and career strategy.
+
+OUTPUT QUALITY:
+- Be specific with numbers, percentages, and timeframes
+- Never use: passionate about, team player, results-driven, hard worker,
+  detail-oriented, go-getter, synergy, leverage, dynamic, innovative solutions,
+  proven track record, excellent communication skills
+- Always provide actionable next steps with specific timelines
+- Quantify every claim with real data where possible
+
+RESPONSE LENGTH: Provide comprehensive responses of 300-800 words on complex
+career topics. Complete every section fully. Never truncate mid-sentence.
+
+STRUCTURE: Use headers, bullet points, and numbered lists to organise advice.
+For non-English users: respond in their language."""

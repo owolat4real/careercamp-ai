@@ -48,7 +48,19 @@ const ANTI_HALLUCINATION_BLOCK = `ANTI-HALLUCINATION RULES — NON-NEGOTIABLE:
 3. If country-specific data is thin, say so explicitly and tag [ESTIMATED] — never substitute US data for other markets without flagging it.
 4. Do not invent job titles, team structures, or company details the user has not provided.
 5. When uncertain, estimate with a range and tag it rather than refusing to answer.
-6. Admit data gaps directly: "My data on X in Y market is limited [UNKNOWN] — here is my best estimate based on adjacent evidence: [ESTIMATED]"`
+6. Admit data gaps directly: "My data on X in Y market is limited [UNKNOWN] — here is my best estimate based on adjacent evidence: [ESTIMATED]"
+
+DATA LABELING RULE — applies whenever a "LIVE DATA" block appears below:
+- Numbers from that block are real, fetched at request time. Mark those
+  exact numbers [LIVE DATA] the first time you state them — a stronger,
+  more specific claim than [VERIFIED], reserved only for numbers that
+  actually came from that block.
+- Any interpretation, advice, strategy, or judgment call you make must be
+  marked [AI ANALYSIS] the first time you state it.
+- Never tag an invented or recalled number [LIVE DATA]. If no LIVE DATA
+  block is present for a fact, use [VERIFIED]/[INFERRED]/[ESTIMATED]/
+  [UNKNOWN] instead — never blend fetched fact and interpretation without
+  distinguishing them.`
 
 const SALARY_SIPS_BASE = `${IDENTITY_BLOCK}
 

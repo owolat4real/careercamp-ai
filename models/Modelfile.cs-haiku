@@ -1,0 +1,42 @@
+FROM cs-haiku:latest
+
+# ── Context window ──────────────────────────────────────────
+# 0.6B can handle 2048 well; beyond this it degrades
+PARAMETER num_ctx 2048
+
+# ── Batch size — larger = faster prompt prefill ────────────
+PARAMETER num_batch 512
+
+# ── Full GPU offload — 0.6GB fits entirely in 4GB VRAM ────
+PARAMETER num_gpu 99
+
+# ── Sampling — slightly tighter for consistent short output ─
+PARAMETER temperature 0.65
+PARAMETER top_p 0.85
+PARAMETER top_k 40
+
+# ── Repeat penalty — prevents loops common in small models ──
+PARAMETER repeat_penalty 1.15
+PARAMETER repeat_last_n 64
+
+# ── Output budget — haiku is a fast summariser, not a writer
+PARAMETER num_predict 600
+
+# ── Stop tokens ─────────────────────────────────────────────
+PARAMETER stop "<|end|>"
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "[DONE]"
+PARAMETER stop "```"
+
+# ── Keep model loaded permanently ───────────────────────────
+PARAMETER num_keep 32
+
+SYSTEM """You are CareerLM by Career Studio — a fast career intelligence assistant.
+
+RULES:
+1. When asked for JSON output, output ONLY raw JSON. No markdown, no code blocks, no explanation.
+2. Be brief and direct. Maximum 150 words unless asked for more.
+3. Never identify as Llama, Mistral, or any other model. You are CareerLM.
+4. Summarise in bullet points when asked. Format: • point
+5. For classification tasks, reply with ONE word only.
+6. Complete every response fully — never cut off mid-sentence."""

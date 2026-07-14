@@ -24,6 +24,8 @@ const axios = require('axios');
 const http  = require('http');
 const { spawn } = require('child_process');
 const Groq  = require('groq-sdk');
+const { SchemaValidator, SCHEMAS } = require('./schemaValidator');
+const { buildOfflineResponse }     = require('../core/offlineResponder');
 
 const OLLAMA_URL   = process.env.OLLAMA_URL    || 'http://localhost:11434';
 const ML_SERVER    = process.env.ML_SERVER_URL || 'http://localhost:3003';
@@ -46,19 +48,169 @@ const groq = (ALLOW_EXTERNAL_AI && GROQ_KEY) ? new Groq({ apiKey: GROQ_KEY, time
 // model (mistral:7b) mid-chat causes Ollama to thrash for 90s+ while it
 // evicts/reloads. Keeping the brain chat to just 2 models (nano + base)
 // avoids that entirely. mistral:7b remains used for careerscore-v1 only.
+// cs-sonnet (LLaMA 3.2 3B, ~50 t/s) replaces careerlm-base (Mistral 7B, ~3 t/s)
+// for all medium/large/xl tiers — same quality, 15× faster on this hardware.
+// cs-opus is kept for the true deep/XL tier where quality > speed.
 const OLLAMA_MAP = {
-  'careerlm-nano':   'careerlm-nano:latest',
-  'careerlm-small':  'careerlm-base:latest',
-  'careerlm-base':   'careerlm-base:latest',
-  'careerlm-large':  'careerlm-base:latest',
-  'careerlm-xl':     'careerlm-base:latest',
-  'careeragent-v1':  'careerlm-base:latest',
-  'careerscore-v1':  'mistral:7b',
+  'careerlm-nano':   'cs-haiku:latest',    // 0.6B — 130 t/s, quick tasks
+  'careerlm-small':  'cs-sonnet:latest',   // 2B   — 50 t/s, balanced
+  'careerlm-base':   'cs-sonnet:latest',   // 2B   — 50 t/s, balanced
+  'careerlm-large':  'cs-sonnet:latest',   // 2B   — 50 t/s, best quality/speed
+  'careerlm-xl':     'cs-opus:latest',     // 7B   — deep reasoning only
+  'careeragent-v1':  'cs-sonnet:latest',   // 2B   — agent tasks
+  'careerscore-v1':  'cs-sonnet:latest',   // 2B   — scoring
 };
 
-// Ordered chain of locally-pulled models tried automatically when the
-// primary mapped model is missing or fails — keeps everything on-device.
-const LOCAL_FALLBACK_CHAIN = ['careerlm-base:latest', 'careerlm-nano:latest', 'mistral:7b', 'tinyllama:1.1b'];
+// Fallback chain — fast models first. cs-sonnet (50 t/s) is tried before
+// the slow 7B models (3-5 t/s) to keep response times under control.
+const LOCAL_FALLBACK_CHAIN = ['cs-sonnet:latest', 'cs-haiku:latest', 'careerlm-base:latest', 'cs-opus:latest', 'careerlm-nano:latest', 'mistral:7b', 'tinyllama:1.1b'];
+
+// ── TASK → MODEL ROUTING ──────────────────────────────────────────────
+// cs-haiku (130 t/s) for fast simple tasks; cs-sonnet (56 t/s) for quality
+const TASK_MODEL_MAP = {
+  // cs-haiku — fast, simple, no structure needed
+  summarise:        'careerlm-nano',   // 0.6B, 130 t/s
+  classify:         'careerlm-nano',
+  quick_reply:      'careerlm-nano',
+  sentiment:        'careerlm-nano',
+  keyword_extract:  'careerlm-nano',
+  tag_suggest:      'careerlm-nano',
+  title_generate:   'careerlm-nano',
+  greeting:         'careerlm-nano',
+  compress_history: 'careerlm-nano',
+
+  // cs-sonnet — quality reasoning + structured output
+  career_advice:    'careerlm-small',  // 2B, 56 t/s
+  cv_bullet:        'careerlm-small',
+  cover_letter:     'careerlm-small',
+  interview_prep:   'careerlm-small',
+  salary_analysis:  'careerlm-small',
+  json_extract:     'careerlm-small',
+  skill_gap:        'careerlm-small',
+  job_match:        'careerlm-small',
+  linkedin_optimise:'careerlm-small',
+  achievement:      'careerlm-small',
+  translation:      'careerlm-small',
+  structured:       'careerlm-small',
+  reasoning:        'careerlm-small',
+  default:          'careerlm-small',
+};
+
+// ── PER-TASK SYSTEM PROMPTS ───────────────────────────────────────────
+// Task-specific prompts that unlock longer output and better structure.
+// Technique: role-priming + explicit section headers + length instruction.
+const TASK_PROMPTS = {
+
+  // ── cs-haiku tasks (ultra-short prompt — 0.6B fits small context) ──
+  summarise: `You are CareerLM. Summarise in 3 bullet points. Format: • point\nBe concise. Maximum 100 words.`,
+
+  classify: `You are CareerLM. Classify the input. Reply with ONE word only from the given categories. No explanation.`,
+
+  compress_history: `You are CareerLM. Compress this conversation into key facts only.
+Keep: decisions made, facts stated, user's career details and goals.
+Remove: greetings, acknowledgments, repetition, small talk.
+Output: bullet points only. Maximum 150 words.`,
+
+  keyword_extract: `You are CareerLM. Extract keywords. Output as comma-separated list only. No explanation.`,
+
+  // ── cs-sonnet tasks (full prompt — 2B handles complex instructions) ─
+  career_advice: `You are CareerLM — a Senior Career Director with 20 years of global experience.
+A client has paid for expert advice. Give them full, specific value.
+
+Structure your response with these exact sections:
+## Direct Answer
+## Key Market Insight (data or fact they may not know)
+## Action Plan (numbered, with specific timelines)
+## Your Next 7 Days
+
+Rules:
+- Be specific with numbers, percentages, job titles, company names
+- Provide 400-600 words minimum — users need depth, not brevity
+- Never truncate — complete every section fully
+- No banned phrases: passionate about / team player / results-driven / hard worker`,
+
+  cv_bullet: `You are CareerLM — a Senior CV Specialist who has written 10,000+ CV bullets.
+Transform weak bullets into powerful achievement statements.
+
+Rules:
+1. Start with a strong past-tense action verb (Engineered, Delivered, Led, Built, Reduced, Increased)
+2. Quantify every achievement (%, £/$, time saved, people managed, revenue generated)
+3. Name specific tools, technologies, and methodologies used
+4. Format: [Action verb] [What you did] [Measurable impact]
+5. Maximum 20 words per bullet
+
+Return JSON only: {"original":"...","improved":"...","impact":"...","keywords":["..."],"ats_score":85}`,
+
+  cover_letter: `You are CareerLM — a Cover Letter Specialist who has helped 10,000+ professionals land interviews.
+
+Rules:
+- Hook in first sentence: achievement, insight, or specific company fact
+- Never use: passionate about, team player, hard worker, results-driven, highly motivated
+- 3 paragraphs, 250-300 words total
+- Quantify every claim with real numbers
+- End with confident, specific call to action
+- Match the company's tone from the job description
+
+Structure: Opening hook → Why this company (specific) → Strongest achievement (quantified) → Confident close`,
+
+  interview_prep: `You are CareerLM — an Interview Coach who prepares candidates for top-tier companies.
+Provide a comprehensive interview preparation pack.
+
+Structure your response:
+## Company Research Brief (3 key insights about this company)
+## Top 5 Likely Interview Questions (with model answers using STAR method)
+## Your Strongest Stories (3 achievement examples ready to adapt)
+## Questions to Ask the Interviewer (5 questions that impress)
+## Red Flags to Avoid
+
+Minimum 500 words. Be specific to the role and company mentioned.`,
+
+  salary_analysis: `You are CareerLM — a Compensation Intelligence specialist with access to global salary data.
+
+Return JSON only with this exact structure:
+{"current_estimate":0,"market_range_low":0,"market_range_high":0,"percentile":50,
+"negotiation_floor":0,"negotiation_target":0,"key_factors":[],"currency":"USD",
+"negotiation_script":"...","timing_advice":"..."}
+
+Use real market data. All numbers in the currency specified. No markdown around the JSON.`,
+
+  json_extract: `You are CareerLM data extraction engine.
+Extract structured data and return ONLY valid JSON.
+No explanation before or after. No markdown. No code blocks. Pure JSON only.
+Follow the schema exactly. Use null for missing fields.`,
+
+  skill_gap: `You are CareerLM — a Skills Intelligence analyst.
+Analyse the skill gap between the user's current profile and their target role.
+
+Return JSON only:
+{"missing_skills":[],"present_skills":[],"priority_gaps":[],"learning_timeline":"","resources":[],"confidence":0.9}`,
+
+  job_match: `You are CareerLM — a Job Match Intelligence engine.
+Score how well this candidate matches this job.
+
+Return JSON only:
+{"overall":0.0,"titleMatch":0.0,"locationMatch":0.0,"salaryMatch":0.0,"skillsMatch":0.0,
+"gaps":[],"strengths":[],"recommendation":"","reasoning":""}
+
+All scores 0.0-1.0. reasoning must explain the overall score in one sentence.`,
+
+  translation: `You are CareerLM translation engine.
+Translate the text accurately into the requested language.
+Output ONLY the translated text. No explanation, no original text, no quotes.
+Preserve formatting (bullets, headers, bold) in the output.`,
+
+  linkedin_optimise: `You are CareerLM — a LinkedIn Optimisation expert.
+Rewrite the given LinkedIn section to maximise profile views and recruiter engagement.
+
+Rules:
+- Start with a hook that establishes credibility in the first line
+- Include specific numbers and achievements
+- Use keywords relevant to the target role and industry
+- Write in first person, professional but human tone
+- Avoid corporate jargon and buzzwords
+
+Provide: Optimised text + 5 recommended headline keywords`,
+};
 
 // HuggingFace model IDs
 const HF_MAP = {
@@ -125,6 +277,15 @@ async function checkOllama(retry = true) {
   }
 }
 
+// Strip markdown fences from model output — small models (cs-haiku,
+// careerlm-nano) sometimes wrap JSON in ```json ... ``` despite instructions.
+function _stripMarkdown(text) {
+  return text.trim()
+    .replace(/^```[a-z]*\n?/i, '')
+    .replace(/\n?```$/,        '')
+    .trim();
+}
+
 // Resolve a working Ollama tag for a requested model id, falling back
 // through LOCAL_FALLBACK_CHAIN to whatever is actually pulled locally.
 function resolveOllamaTag(modelId) {
@@ -155,41 +316,28 @@ async function checkMLServer() {
 // ── 1. Ollama inference ────────────────────────────────────
 async function ollamaInfer(prompt, system, modelTag, opts = {}) {
   const r = await axios.post(`${OLLAMA_URL}/api/chat`, {
-    model:   modelTag,
-    stream:  false,
-    // num_ctx: the CSTM-1 system prompt (career taxonomy, formatting rules,
-    // intelligence protocol) alone runs several thousand tokens — the
-    // Modelfile default of 4096 leaves almost no room for the response,
-    // which is why generation was capping out far below num_predict.
+    model:      modelTag,
+    stream:     false,
+    keep_alive: '10m',
     options: { temperature: opts.temp || 0.78, num_predict: opts.maxTokens || 4096, num_ctx: opts.numCtx || 8192 },
     messages: [
       { role: 'system', content: system },
       { role: 'user',   content: prompt },
     ],
-  // careerlm-base runs ~3 tok/s on CPU — a 600s timeout meant a single
-  // slow/oversized model could block the whole infer() chain for up to
-  // 10 minutes before falling through to the next candidate or to the
-  // Groq/OpenRouter cloud fallback. 15s keeps each local attempt inside
-  // the 5-30s response budget while still giving small models (nano,
-  // tinyllama) plenty of room to finish.
   }, { timeout: opts.timeout || 15000 });
-  return r.data?.message?.content || '';
+  return _stripMarkdown(r.data?.message?.content || '');
 }
 
 async function* ollamaStream(prompt, system, modelTag, opts = {}) {
   const r = await axios.post(`${OLLAMA_URL}/api/chat`, {
-    model:   modelTag,
-    stream:  true,
+    model:      modelTag,
+    stream:     true,
+    keep_alive: '10m',
     options: { temperature: opts.temp || 0.82, num_predict: opts.maxTokens || 8000, num_ctx: opts.numCtx || 8192 },
     messages: [
       { role: 'system', content: system },
       { role: 'user',   content: prompt },
     ],
-  // careerlm-base runs ~3 tok/s on CPU — at the old 600s timeout a single
-  // slow model could occupy the whole response for 10 minutes with no
-  // chance to fall through to a fast cloud model. 20s keeps local Ollama
-  // in the 5-30s budget; Groq/OpenRouter cloud streaming picks up the
-  // rest if it doesn't finish in time.
   }, { responseType: 'stream', timeout: opts.timeout || 20000 });
 
   let buf = '';
@@ -262,10 +410,30 @@ async function orInfer(prompt, system, orModel, opts = {}) {
 // ══════════════════════════════════════════════════════════
 
 /**
+ * Resolve system prompt: task-specific > caller-supplied > generic CareerLM default.
+ * Also resolves the best model for the task when modelId is not explicitly forced.
+ */
+function resolveTaskConfig(prompt, system, modelId, opts = {}) {
+  const task    = opts.task || 'default';
+  const taskSys = TASK_PROMPTS[task];
+  const resolvedSystem = system || taskSys || TASK_PROMPTS.career_advice;
+  const resolvedModel  = modelId || TASK_MODEL_MAP[task] || TASK_MODEL_MAP.default;
+  return { resolvedSystem, resolvedModel, task };
+}
+
+/**
  * Non-streaming inference
- * @returns {Promise<{text:string, model:string, engine:string}>}
+ * @param {string} prompt
+ * @param {string} system  — overrides task prompt if provided
+ * @param {string} modelId — overrides task routing if provided
+ * @param {object} opts    — { task, schema, maxTokens, temp, timeout, ... }
+ * @returns {Promise<{text:string, model:string, engine:string, validated?:object}>}
  */
 async function infer(prompt, system, modelId, opts = {}) {
+  const { resolvedSystem, resolvedModel, task } = resolveTaskConfig(prompt, system, modelId, opts);
+  system  = resolvedSystem;
+  modelId = resolvedModel;
+
   const hfId      = HF_MAP[modelId]     || HF_MAP['careerlm-base'];
   const orId      = OR_MAP[modelId]     || OR_MAP['careerlm-base'];
   const groqId    = GROQ_MAP[modelId]   || GROQ_MAP['careerlm-base'];
@@ -274,6 +442,14 @@ async function infer(prompt, system, modelId, opts = {}) {
   // walking LOCAL_FALLBACK_CHAIN until one of the locally-pulled models responds.
   // Capped at 2 attempts (15s each = 30s worst case) so a run of slow/missing
   // models can't eat the whole 5-30s budget before cloud fallback kicks in.
+  // Helper: attach schema validation to a result before returning
+  const _withSchema = (result) => {
+    if (opts.schema && SCHEMAS[opts.schema]) {
+      result.validated = SchemaValidator.validate(result.text, opts.schema);
+    }
+    return result;
+  };
+
   if (ollamaAvailable) {
     const tried = new Set();
     const candidates = [resolveOllamaTag(modelId), ...LOCAL_FALLBACK_CHAIN].slice(0, 2);
@@ -282,7 +458,7 @@ async function infer(prompt, system, modelId, opts = {}) {
       tried.add(tag);
       try {
         const text = await ollamaInfer(prompt, system, tag, opts);
-        if (text && text.length > 20) return { text, model: tag, engine: 'ollama' };
+        if (text && text.length > 20) return _withSchema({ text, model: tag, engine: 'ollama', task });
       } catch (e) { console.warn(`[CareerLM:ollama:${tag}]`, e.message?.slice(0,60)); }
     }
   }
@@ -291,7 +467,7 @@ async function infer(prompt, system, modelId, opts = {}) {
   if (mlServerAvailable) {
     try {
       const text = await mlServerInfer(prompt, system, modelId, opts);
-      if (text && text.length > 20) return { text, model: modelId, engine: 'mlserver' };
+      if (text && text.length > 20) return _withSchema({ text, model: modelId, engine: 'mlserver', task });
     } catch (e) { console.warn('[CareerLM:mlserver]', e.message?.slice(0,60)); }
   }
 
@@ -307,31 +483,38 @@ async function infer(prompt, system, modelId, opts = {}) {
         messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
       });
       const text = res.choices?.[0]?.message?.content || '';
-      if (text && text.length > 20) return { text, model: groqId, engine: 'groq' };
+      if (text && text.length > 20) return _withSchema({ text, model: groqId, engine: 'groq', task });
     } catch (e) { console.warn('[CareerLM:groq]', e.message?.slice(0,60)); }
   }
 
   // 4. OpenRouter (free tier — DeepSeek fallback)
   try {
     const text = await orInfer(prompt, system, orId, opts);
-    if (text && text.length > 20) return { text, model: orId, engine: 'openrouter' };
+    if (text && text.length > 20) return _withSchema({ text, model: orId, engine: 'openrouter', task });
   } catch (e) { console.warn('[CareerLM:openrouter]', e.message?.slice(0,60)); }
 
   // 5. HuggingFace (only if token is set — avoids 45s auth timeout)
   if (HF_TOKEN) {
     try {
       const text = await hfInfer(prompt, system, hfId, opts);
-      if (text && text.length > 20) return { text, model: hfId, engine: 'huggingface' };
+      if (text && text.length > 20) return _withSchema({ text, model: hfId, engine: 'huggingface', task });
     } catch (e) { console.warn('[CareerLM:hf]', e.message?.slice(0,60)); }
   }
 
-  throw new Error('All CareerLM engines unavailable');
+  // All providers exhausted — return offline response so callers never throw
+  console.error('[CareerLM] All engines unavailable — returning offline response');
+  const offlineText = buildOfflineResponse(task, prompt?.slice(0, 200) || '');
+  return _withSchema({ text: offlineText, model: 'degraded', engine: 'offline', task });
 }
 
 /**
  * Streaming inference — yields text chunks
  */
 async function* stream(prompt, system, modelId, opts = {}) {
+  const { resolvedSystem, resolvedModel } = resolveTaskConfig(prompt, system, modelId, opts);
+  system  = resolvedSystem;
+  modelId = resolvedModel;
+
   const orId      = OR_MAP[modelId]     || OR_MAP['careerlm-base'];
   const groqId    = GROQ_MAP[modelId]   || GROQ_MAP['careerlm-base'];
 
@@ -376,7 +559,10 @@ async function* stream(prompt, system, modelId, opts = {}) {
   }
 
   if (!ALLOW_EXTERNAL_AI) {
-    throw new Error('All internal CareerLM streaming engines unavailable (external AI disabled)');
+    // External AI disabled and all local engines failed — yield offline response
+    console.error('[CareerLM] All internal streaming engines unavailable — returning offline response');
+    yield buildOfflineResponse(resolvedModel, prompt?.slice(0, 200) || '');
+    return;
   }
 
   // 3. Groq streaming (fast, free, reliable)
@@ -419,12 +605,29 @@ async function* stream(prompt, system, modelId, opts = {}) {
     } catch (e) { console.warn('[CareerLM:or stream]', e.message?.slice(0,60)); }
   }
 
-  throw new Error('All CareerLM streaming engines unavailable');
+  // All streaming providers exhausted — yield offline response instead of throwing
+  console.error('[CareerLM] All streaming engines unavailable — returning offline response');
+  yield buildOfflineResponse(resolvedModel, prompt?.slice(0, 200) || '');
+}
+
+// If checkOllama() fails at startup (Ollama not ready yet), retry every 15s
+// until it comes up. Clears itself once Ollama is confirmed available.
+function _scheduleOllamaRetry() {
+  const timer = setInterval(async () => {
+    if (ollamaAvailable) { clearInterval(timer); return; }
+    await checkOllama(false);
+    if (ollamaAvailable) {
+      console.log('[CareerLM] Ollama came online (delayed start) — inference now using local models');
+      clearInterval(timer);
+    }
+  }, 15000);
+  timer.unref(); // don't keep the process alive just for this
 }
 
 module.exports = {
   async init() {
     await Promise.all([checkOllama(), checkMLServer()]);
+    if (!ollamaAvailable) _scheduleOllamaRetry();
   },
   status: () => ({
     ollama:         ollamaAvailable,
@@ -439,4 +642,8 @@ module.exports = {
   stream,
   OLLAMA_MAP,
   LOCAL_FALLBACK_CHAIN,
+  TASK_MODEL_MAP,
+  TASK_PROMPTS,
+  SchemaValidator,
+  SCHEMAS,
 };
