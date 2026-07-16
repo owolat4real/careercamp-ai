@@ -342,7 +342,7 @@ async function externalFallback(feature, messages) {
         model: orModel, messages, max_tokens: feature.maxTokens, temperature: 0.7,
       }, {
         headers: { Authorization: `Bearer ${orKey}`, 'Content-Type': 'application/json',
-                   'HTTP-Referer': 'https://careerstudio.ai', 'X-Title': 'Career Studio' },
+                   'HTTP-Referer': 'https://careerstudiomax.com', 'X-Title': 'Career Studio' },
         timeout: 30_000, httpsAgent,
       });
       const text = resp.data?.choices?.[0]?.message?.content || '';

@@ -477,7 +477,7 @@ async function _externalFallback(task, messages, maxTokens) {
         model: orModel, messages, max_tokens: maxTokens, temperature: 0.7,
       }, {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${orKey}`,
-                   'HTTP-Referer': 'https://careerstudio.ai', 'X-Title': 'Career Studio' },
+                   'HTTP-Referer': 'https://careerstudiomax.com', 'X-Title': 'Career Studio' },
         timeout: 30_000,
       });
       const content = resp.data?.choices?.[0]?.message?.content || '';

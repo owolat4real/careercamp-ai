@@ -17,11 +17,11 @@
  *       └── Python ML Server    (port 3003)  ←── heavy inference offloaded here
  *
  * DNS Subdomains (configure in nginx/careerstudio.conf):
- *   llm.careerstudio.ai    → this gateway /v1/chat/completions
- *   vlm.careerstudio.ai    → this gateway /v1/vision/*
- *   voice.careerstudio.ai  → this gateway /v1/audio/*
- *   embed.careerstudio.ai  → this gateway /v1/embeddings
- *   api.careerstudio.ai    → this gateway /v1/* (all)
+ *   llm.careerstudiomax.com    → this gateway /v1/chat/completions
+ *   vlm.careerstudiomax.com    → this gateway /v1/vision/*
+ *   voice.careerstudiomax.com  → this gateway /v1/audio/*
+ *   embed.careerstudiomax.com  → this gateway /v1/embeddings
+ *   api.careerstudiomax.com    → this gateway /v1/* (all)
  *
  * OpenAI-compatible API — Career Studio's camp-client.js connects without changes.
  *
@@ -296,11 +296,11 @@ async function boot() {
   server.listen(PORT, () => {
     console.log(`\n  🚀 CareerCamp AI Gateway → http://localhost:${PORT}/v1`);
     console.log(`  📡 DNS targets:`);
-    console.log(`       llm.careerstudio.ai    → /v1/chat/completions`);
-    console.log(`       vlm.careerstudio.ai    → /v1/images/analyze`);
-    console.log(`       voice.careerstudio.ai  → /v1/audio/*`);
-    console.log(`       embed.careerstudio.ai  → /v1/embeddings`);
-    console.log(`       bert.careerstudio.ai   → /v1/bert/*\n`);
+    console.log(`       llm.careerstudiomax.com    → /v1/chat/completions`);
+    console.log(`       vlm.careerstudiomax.com    → /v1/images/analyze`);
+    console.log(`       voice.careerstudiomax.com  → /v1/audio/*`);
+    console.log(`       embed.careerstudiomax.com  → /v1/embeddings`);
+    console.log(`       bert.careerstudiomax.com   → /v1/bert/*\n`);
   });
 }
 

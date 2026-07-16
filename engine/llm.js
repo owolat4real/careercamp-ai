@@ -397,7 +397,7 @@ async function orInfer(prompt, system, orModel, opts = {}) {
   }, {
     headers: {
       Authorization: `Bearer ${OR_KEY}`,
-      'HTTP-Referer': 'https://careerstudio.ai',
+      'HTTP-Referer': 'https://careerstudiomax.com',
       'X-Title': 'CareerCamp AI',
     },
     timeout: opts.timeout || 30000,
@@ -588,7 +588,7 @@ async function* stream(prompt, system, modelId, opts = {}) {
         model: orId, stream: true, max_tokens: opts.maxTokens || 8000, temperature: opts.temp || 0.82,
         messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
       }, {
-        headers: { Authorization: `Bearer ${OR_KEY}`, 'HTTP-Referer': 'https://careerstudio.ai', 'X-Title': 'CareerCamp AI' },
+        headers: { Authorization: `Bearer ${OR_KEY}`, 'HTTP-Referer': 'https://careerstudiomax.com', 'X-Title': 'CareerCamp AI' },
         responseType: 'stream', timeout: 60000,
       });
       let buf = '', yielded = false;
