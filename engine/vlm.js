@@ -25,16 +25,32 @@ const path  = require('path');
 const OLLAMA_URL = process.env.OLLAMA_URL    || 'http://localhost:11434';
 const ML_SERVER  = process.env.ML_SERVER_URL || 'http://localhost:3003';
 
-let ollamaVision = false; // LLaVA available in Ollama
+let ollamaVision = false; // vision-capable model available in Ollama
+let ollamaVisionModel = null; // the actual pulled model name to use
+
+// Preference order when multiple vision models are pulled — avatarvid-2b's
+// own baked-in system prompt is purpose-built for avatar/interview-frame
+// analysis (gaze, pose, emotion tracking), so it's a better fit for that
+// task than the generic llava/moondream base models it's built on.
+const VISION_MODEL_PREFERENCE = ['avatarvid-2b', 'llava', 'bakllava', 'vision', 'moondream'];
 
 async function checkVisionModels() {
   try {
     const r = await axios.get(`${OLLAMA_URL}/api/tags`, { timeout: 3000 });
     const models = (r.data?.models || []).map(m => m.name);
-    ollamaVision = models.some(m => m.includes('llava') || m.includes('vision') || m.includes('bakllava'));
-    if (ollamaVision) console.log('[CareerVision] LLaVA model available in Ollama');
-    else console.warn('[CareerVision] No vision model in Ollama. Run: ollama pull llava:7b');
-  } catch (_) { ollamaVision = false; }
+    // Previously hardcoded 'llava:7b' in ollamaVisionInfer() regardless of
+    // what was actually pulled — real pulled models here are llava-phi3,
+    // moondream, avatarvid-2b, none of which match that literal name, so
+    // every vision call 404'd against Ollama and silently fell through to
+    // the (also failing) lower tiers. Store the real matched name instead.
+    for (const pref of VISION_MODEL_PREFERENCE) {
+      const match = models.find(m => m.toLowerCase().includes(pref));
+      if (match) { ollamaVisionModel = match; break; }
+    }
+    ollamaVision = !!ollamaVisionModel;
+    if (ollamaVision) console.log(`[CareerVision] Vision model available in Ollama: ${ollamaVisionModel}`);
+    else console.warn('[CareerVision] No vision model in Ollama. Run: ollama pull llava-phi3');
+  } catch (_) { ollamaVision = false; ollamaVisionModel = null; }
 }
 
 // ── Convert image to base64 ────────────────────────────────
@@ -96,8 +112,9 @@ Label each section clearly.`,
 
 // ── Ollama vision inference ────────────────────────────────
 async function ollamaVisionInfer(imageBase64, prompt) {
+  if (!ollamaVisionModel) throw new Error('No Ollama vision model detected');
   const r = await axios.post(`${OLLAMA_URL}/api/generate`, {
-    model:  'llava:7b',
+    model:  ollamaVisionModel,
     prompt: prompt,
     images: [imageBase64],
     stream: false,
@@ -187,7 +204,7 @@ async function analyzeVideoFrames(frames, task = 'interview_frame') {
 
 module.exports = {
   async init() { await checkVisionModels(); },
-  status: () => ({ ollamaVision }),
+  status: () => ({ ollamaVision, ollamaVisionModel }),
   analyzeImage,
   analyzeVideoFrames,
   VISION_PROMPTS,
