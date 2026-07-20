@@ -1,0 +1,166 @@
+diff --git a/src/face3d/models/arcface_torch/eval_ijbc.py b/src/face3d/models/arcface_torch/eval_ijbc.py
+index 9c5a650..c6385b7 100644
+--- a/src/face3d/models/arcface_torch/eval_ijbc.py
++++ b/src/face3d/models/arcface_torch/eval_ijbc.py
+@@ -120,8 +120,8 @@ def divideIntoNstrand(listTemp, n):
+ def read_template_media_list(path):
+     # ijb_meta = np.loadtxt(path, dtype=str)
+     ijb_meta = pd.read_csv(path, sep=' ', header=None).values
+-    templates = ijb_meta[:, 1].astype(np.int)
+-    medias = ijb_meta[:, 2].astype(np.int)
++    templates = ijb_meta[:, 1].astype(np.int64)
++    medias = ijb_meta[:, 2].astype(np.int64)
+     return templates, medias
+ 
+ 
+@@ -132,10 +132,10 @@ def read_template_pair_list(path):
+     # pairs = np.loadtxt(path, dtype=str)
+     pairs = pd.read_csv(path, sep=' ', header=None).values
+     # print(pairs.shape)
+-    # print(pairs[:, 0].astype(np.int))
+-    t1 = pairs[:, 0].astype(np.int)
+-    t2 = pairs[:, 1].astype(np.int)
+-    label = pairs[:, 2].astype(np.int)
++    # print(pairs[:, 0].astype(np.int64))
++    t1 = pairs[:, 0].astype(np.int64)
++    t2 = pairs[:, 1].astype(np.int64)
++    label = pairs[:, 2].astype(np.int64)
+     return t1, t2, label
+ 
+ 
+diff --git a/src/face3d/models/arcface_torch/onnx_ijbc.py b/src/face3d/models/arcface_torch/onnx_ijbc.py
+index 05b50bf..d74e60a 100644
+--- a/src/face3d/models/arcface_torch/onnx_ijbc.py
++++ b/src/face3d/models/arcface_torch/onnx_ijbc.py
+@@ -77,16 +77,16 @@ def extract(model_root, dataset):
+ 
+ def read_template_media_list(path):
+     ijb_meta = pd.read_csv(path, sep=' ', header=None).values
+-    templates = ijb_meta[:, 1].astype(np.int)
+-    medias = ijb_meta[:, 2].astype(np.int)
++    templates = ijb_meta[:, 1].astype(np.int64)
++    medias = ijb_meta[:, 2].astype(np.int64)
+     return templates, medias
+ 
+ 
+ def read_template_pair_list(path):
+     pairs = pd.read_csv(path, sep=' ', header=None).values
+-    t1 = pairs[:, 0].astype(np.int)
+-    t2 = pairs[:, 1].astype(np.int)
+-    label = pairs[:, 2].astype(np.int)
++    t1 = pairs[:, 0].astype(np.int64)
++    t2 = pairs[:, 1].astype(np.int64)
++    label = pairs[:, 2].astype(np.int64)
+     return t1, t2, label
+ 
+ 
+diff --git a/src/face3d/models/arcface_torch/torch2onnx.py b/src/face3d/models/arcface_torch/torch2onnx.py
+index fc26ab8..49884a9 100644
+--- a/src/face3d/models/arcface_torch/torch2onnx.py
++++ b/src/face3d/models/arcface_torch/torch2onnx.py
+@@ -6,7 +6,7 @@ import torch
+ def convert_onnx(net, path_module, output, opset=11, simplify=False):
+     assert isinstance(net, torch.nn.Module)
+     img = np.random.randint(0, 255, size=(112, 112, 3), dtype=np.int32)
+-    img = img.astype(np.float)
++    img = img.astype(np.float64)
+     img = (img / 255. - 0.5) / 0.5  # torch style norm
+     img = img.transpose((2, 0, 1))
+     img = torch.from_numpy(img).unsqueeze(0).float()
+diff --git a/src/face3d/models/arcface_torch/utils/plot.py b/src/face3d/models/arcface_torch/utils/plot.py
+index ccc588e..08ef5d8 100644
+--- a/src/face3d/models/arcface_torch/utils/plot.py
++++ b/src/face3d/models/arcface_torch/utils/plot.py
+@@ -18,9 +18,9 @@ files = [
+ 
+ def read_template_pair_list(path):
+     pairs = pd.read_csv(path, sep=' ', header=None).values
+-    t1 = pairs[:, 0].astype(np.int)
+-    t2 = pairs[:, 1].astype(np.int)
+-    label = pairs[:, 2].astype(np.int)
++    t1 = pairs[:, 0].astype(np.int64)
++    t2 = pairs[:, 1].astype(np.int64)
++    label = pairs[:, 2].astype(np.int64)
+     return t1, t2, label
+ 
+ 
+diff --git a/src/face3d/util/my_awing_arch.py b/src/face3d/util/my_awing_arch.py
+index cd56561..647fa11 100644
+--- a/src/face3d/util/my_awing_arch.py
++++ b/src/face3d/util/my_awing_arch.py
+@@ -15,7 +15,7 @@ def calculate_points(heatmaps):
+     indexes = np.argmax(heatline, axis=2)
+ 
+     preds = np.stack((indexes % W, indexes // W), axis=2)
+-    preds = preds.astype(np.float, copy=False)
++    preds = preds.astype(np.float64, copy=False)
+ 
+     inr = indexes.ravel()
+ 
+diff --git a/src/face3d/util/preprocess.py b/src/face3d/util/preprocess.py
+index b77a3a4..69d0244 100644
+--- a/src/face3d/util/preprocess.py
++++ b/src/face3d/util/preprocess.py
+@@ -98,6 +98,6 @@ def align_img(img, lm, lm3D, mask=None, target_size=224., rescale_factor=102.):
+ 
+     # processing the image
+     img_new, lm_new, mask_new = resize_n_crop_img(img, lm, t, s, target_size=target_size, mask=mask)
+-    trans_params = np.array([w0, h0, s, t[0], t[1]])
++    trans_params = np.array([w0, h0, float(s), float(t[0]), float(t[1])])
+ 
+     return trans_params, img_new, lm_new, mask_new
+diff --git a/src/utils/videoio.py b/src/utils/videoio.py
+index 08bfbdd..988219c 100644
+--- a/src/utils/videoio.py
++++ b/src/utils/videoio.py
+@@ -2,9 +2,20 @@ import shutil
+ import uuid
+ 
+ import os
++import subprocess
+ 
+ import cv2
+ 
++# No system-wide ffmpeg is installed/on PATH in this environment (or
++# generally guaranteed on a fresh deploy) — imageio-ffmpeg is already a
++# real dependency here and bundles its own ffmpeg binary, so use that
++# directly instead of assuming a bare "ffmpeg" command resolves.
++try:
++    import imageio_ffmpeg
++    FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
++except Exception:
++    FFMPEG_BIN = 'ffmpeg'
++
+ def load_video_to_cv2(input_path):
+     video_stream = cv2.VideoCapture(input_path)
+     fps = video_stream.get(cv2.CAP_PROP_FPS)
+@@ -19,8 +30,15 @@ def load_video_to_cv2(input_path):
+ 
+ def save_video_with_watermark(video, audio, save_path, watermark=False):
+     temp_file = str(uuid.uuid4())+'.mp4'
+-    cmd = r'ffmpeg -y -hide_banner -loglevel error -i "%s" -i "%s" -vcodec copy "%s"' % (video, audio, temp_file)
+-    os.system(cmd)
++    # os.system() shells out via cmd.exe on Windows, which was failing here
++    # with a generic "system cannot find the path specified" even though
++    # the exact same command runs fine invoked directly — a real quirk of
++    # this specific process chain's cmd.exe/COMSPEC resolution, not the
++    # command itself. subprocess.run() with an argument list bypasses the
++    # shell entirely, sidestepping that (and any shell-quoting risk from
++    # interpolating file paths into a string) on every platform.
++    subprocess.run([FFMPEG_BIN, '-y', '-hide_banner', '-loglevel', 'error',
++                    '-i', video, '-i', audio, '-vcodec', 'copy', temp_file], check=True)
+ 
+     if watermark is False:
+         shutil.move(temp_file, save_path)
+@@ -36,6 +54,8 @@ def save_video_with_watermark(video, audio, save_path, watermark=False):
+             dir_path = os.path.dirname(os.path.realpath(__file__))
+             watarmark_path = dir_path+"/../../docs/sadtalker_logo.png"
+ 
+-        cmd = r'ffmpeg -y -hide_banner -loglevel error -i "%s" -i "%s" -filter_complex "[1]scale=100:-1[wm];[0][wm]overlay=(main_w-overlay_w)-10:10" "%s"' % (temp_file, watarmark_path, save_path)
+-        os.system(cmd)
++        subprocess.run([FFMPEG_BIN, '-y', '-hide_banner', '-loglevel', 'error',
++                        '-i', temp_file, '-i', watarmark_path, '-filter_complex',
++                        '[1]scale=100:-1[wm];[0][wm]overlay=(main_w-overlay_w)-10:10',
++                        save_path], check=True)
+         os.remove(temp_file)
+\ No newline at end of file

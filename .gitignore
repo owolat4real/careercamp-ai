@@ -1,5 +1,12 @@
 node_modules/
 .env
+
+# Vendored SadTalker clone for the self-hosted talking-head engine —
+# its own venv, model checkpoints, and standalone ffprobe binary. See
+# talkinghead/setup.sh to reproduce; talkinghead/ itself IS tracked
+# (patches, the server script, and requirements are the actual source
+# of truth, not this vendored copy).
+_sadtalker_src/
 models/.cache/
 models/whisper/
 *.gguf
