@@ -39,12 +39,23 @@ const WHISPER_BIN = process.env.WHISPER_BIN     || path.join(__dirname, '../mode
 const groq = GROQ_KEY ? new Groq({ apiKey: GROQ_KEY }) : null;
 
 // ── Voice configurations ───────────────────────────────────
+// coquiSpeaker values below are best-effort names from Coqui XTTS-v2's
+// publicly documented built-in speaker set (the checkpoint ships ~58 named
+// zero-shot speakers with no reference audio needed). The previous values
+// ('career_coach'/'interviewer'/'mentor'/'analyst') weren't real XTTS
+// speaker names at all — api_server.py's /v1/tts already falls back to the
+// model's first available speaker whenever the requested name isn't
+// recognised, so if any of these four are wrong, behavior is identical to
+// before this change (one shared fallback voice), never worse. Not
+// verified against a running instance — this environment has no
+// GPU/model weights to test against. Worth spot-checking once self-hosted
+// XTTS is actually running.
 const VOICES = {
   'career-coach': {
     id:          'career-coach-v1',
     description: 'Warm, authoritative, encouraging career advisor',
     elevenLabs:  'EXAVITQu4vr4xnSDxMaL', // Sarah
-    coquiSpeaker: 'career_coach',
+    coquiSpeaker: 'Alison Dietlinde', // warm female — closest XTTS analogue to ElevenLabs' Sarah
     speed:       1.0,
     pitch:       0.95,
   },
@@ -52,7 +63,7 @@ const VOICES = {
     id:          'interviewer-v1',
     description: 'Professional, formal, measured interviewer',
     elevenLabs:  'N2lVS1w4EtoT3dr4eOWO', // Callum
-    coquiSpeaker: 'interviewer',
+    coquiSpeaker: 'Damien Black', // measured male — closest XTTS analogue to ElevenLabs' Callum
     speed:       0.95,
     pitch:       1.0,
   },
@@ -60,7 +71,7 @@ const VOICES = {
     id:          'mentor-v1',
     description: 'Friendly, experienced, thoughtful mentor',
     elevenLabs:  'pqHfZKP75CvOlQylNhV4', // Bill
-    coquiSpeaker: 'mentor',
+    coquiSpeaker: 'Viktor Eka', // warmer, older-sounding male — closest XTTS analogue to ElevenLabs' Bill
     speed:       0.90,
     pitch:       0.92,
   },
@@ -68,7 +79,7 @@ const VOICES = {
     id:          'analyst-v1',
     description: 'Clear, precise, data-driven analyst',
     elevenLabs:  'jBpfuIE2acCO8z3wKNLl', // Gigi
-    coquiSpeaker: 'analyst',
+    coquiSpeaker: 'Alexandra Hisakawa', // clear, precise female — closest XTTS analogue to ElevenLabs' Gigi
     speed:       1.05,
     pitch:       1.02,
   },
