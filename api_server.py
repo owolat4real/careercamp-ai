@@ -296,10 +296,13 @@ async def tts(req: TTSRequest):
             out_path = tmp.name
         # XTTS-v2 is multi-speaker and raises if neither speaker nor speaker_wav
         # is given. req.voice previously went unused, so every call threw and
-        # silently fell through to the paid ElevenLabs fallback. None of our
-        # persona ids (career-coach, interviewer, ...) are real XTTS preset
-        # speaker names — no per-persona reference audio ships in this repo —
-        # so fall back to a valid built-in speaker rather than crashing.
+        # silently fell through to the paid ElevenLabs fallback. engine/voice.js
+        # now sends one of XTTS-v2's real built-in speaker names (verified
+        # directly against the checkpoint's speakers_xtts.pth file — see
+        # engine/voice.js's VOICES comment), so the normal path matches here
+        # on the first try; this fallback to the first available speaker only
+        # exists as a safety net against a future typo/edit, not the everyday
+        # case anymore.
         preset_speakers = getattr(tts_model, "speakers", None) or []
         speaker = req.voice if req.voice in preset_speakers else (preset_speakers[0] if preset_speakers else None)
         tts_kwargs = {"text": req.text, "language": req.language, "file_path": out_path}

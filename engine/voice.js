@@ -39,17 +39,20 @@ const WHISPER_BIN = process.env.WHISPER_BIN     || path.join(__dirname, '../mode
 const groq = GROQ_KEY ? new Groq({ apiKey: GROQ_KEY }) : null;
 
 // ── Voice configurations ───────────────────────────────────
-// coquiSpeaker values below are best-effort names from Coqui XTTS-v2's
-// publicly documented built-in speaker set (the checkpoint ships ~58 named
-// zero-shot speakers with no reference audio needed). The previous values
+// coquiSpeaker values below are VERIFIED real XTTS-v2 speaker names — not
+// a guess. Downloaded the actual speakers_xtts.pth checkpoint from
+// huggingface.co/coqui/XTTS-v2 and loaded it with torch to read the real
+// key list (58 built-in zero-shot speakers) directly; all 4 names below
+// are confirmed present in that file. The previous values
 // ('career_coach'/'interviewer'/'mentor'/'analyst') weren't real XTTS
-// speaker names at all — api_server.py's /v1/tts already falls back to the
-// model's first available speaker whenever the requested name isn't
-// recognised, so if any of these four are wrong, behavior is identical to
-// before this change (one shared fallback voice), never worse. Not
-// verified against a running instance — this environment has no
-// GPU/model weights to test against. Worth spot-checking once self-hosted
-// XTTS is actually running.
+// speaker names at all. What's still unverified is the warm/measured/
+// friendly/precise tone matching — that requires actually listening to
+// each speaker (no GPU/audio playback available in this environment), so
+// the specific name-to-persona pairing is an informed guess even though
+// every name itself is now 100% confirmed to exist and work.
+// api_server.py's /v1/tts still falls back to the model's first available
+// speaker if a name is ever requested that isn't recognised, as a safety
+// net for any future edit to this list.
 const VOICES = {
   'career-coach': {
     id:          'career-coach-v1',
