@@ -123,13 +123,16 @@ async function ollamaVisionInfer(imageBase64, prompt) {
 }
 
 // ── Python ML server vision inference ─────────────────────
+// /v1/vision is FastAPI Form()-only (not a JSON body) and reads the field
+// named "image_base64", not "image" — must post as x-www-form-urlencoded.
 async function mlServerVisionInfer(imageBase64, prompt, mimeType = 'image/jpeg') {
-  const r = await axios.post(`${ML_SERVER}/v1/vision`, {
-    image:     imageBase64,
-    mime_type: mimeType,
+  const body = new URLSearchParams({
+    image_base64: imageBase64,
+    mime_type:    mimeType,
     prompt,
-    model:    'llava-1.6',
-  }, { timeout: 120000 });
+    model:        'llava-1.6',
+  });
+  const r = await axios.post(`${ML_SERVER}/v1/vision`, body, { timeout: 120000 });
   return r.data?.text || '';
 }
 

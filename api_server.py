@@ -294,7 +294,18 @@ async def tts(req: TTSRequest):
         import tempfile
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             out_path = tmp.name
-        tts_model.tts_to_file(text=req.text, language=req.language, file_path=out_path)
+        # XTTS-v2 is multi-speaker and raises if neither speaker nor speaker_wav
+        # is given. req.voice previously went unused, so every call threw and
+        # silently fell through to the paid ElevenLabs fallback. None of our
+        # persona ids (career-coach, interviewer, ...) are real XTTS preset
+        # speaker names — no per-persona reference audio ships in this repo —
+        # so fall back to a valid built-in speaker rather than crashing.
+        preset_speakers = getattr(tts_model, "speakers", None) or []
+        speaker = req.voice if req.voice in preset_speakers else (preset_speakers[0] if preset_speakers else None)
+        tts_kwargs = {"text": req.text, "language": req.language, "file_path": out_path}
+        if speaker:
+            tts_kwargs["speaker"] = speaker
+        tts_model.tts_to_file(**tts_kwargs)
         with open(out_path, "rb") as f:
             audio_data = f.read()
         os.unlink(out_path)
