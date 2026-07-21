@@ -85,8 +85,13 @@ const VOICES = {
   },
 };
 
+// XTTS-v2's actual supported-language list (17 languages) — the previous
+// version of this list included 'yo' (Yoruba) and 'sw' (Swahili), neither
+// of which XTTS-v2 supports at all (a request for either would silently
+// mispronounce or fail), and was missing 'tr'/'cs'/'hu' (Turkish/Czech/
+// Hungarian), which it genuinely does support.
 const SUPPORTED_LANGUAGES = [
-  'en', 'es', 'fr', 'de', 'pt', 'zh', 'ja', 'ko', 'ar', 'hi', 'yo', 'sw', 'nl', 'it', 'pl', 'ru',
+  'en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh-cn', 'ja', 'hu', 'ko', 'hi',
 ];
 
 // ═══════════════════════════════════════════════════════════
