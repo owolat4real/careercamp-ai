@@ -1,0 +1,44 @@
+# ══════════════════════════════════════════════════════════════════
+# Self-hosted Stable Video Diffusion — RunPod Serverless GPU build
+# The INTERNAL video model: cs_fixed/services/videoGen.js tries this
+# endpoint first and only falls back to Stability AI's paid hosted API
+# if this one is unconfigured, unreachable, or fails. Same rationale as
+# _sadtalker_src/ and _xtts_src/: Serverless scales to zero between
+# generations rather than billing for an idle GPU continuously.
+# Deliberately a SEPARATE RunPod endpoint (own RUNPOD_SVD_ENDPOINT_ID)
+# so an outage on this or either other handler never blocks the others.
+# ══════════════════════════════════════════════════════════════════
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 python3-pip python3.10-dev \
+    ffmpeg git wget curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.10 /usr/bin/python
+
+# Torch build matched to the CUDA 11.8 base image above, and to a
+# version diffusers==0.31.0 (pinned in requirements.txt) is known to
+# work with.
+RUN pip install --no-cache-dir torch==2.1.2 torchvision==0.16.2 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY _engine.py .
+COPY runpod_handler.py .
+
+# Bake the SVD-XT checkpoint (~10GB fp16) into the image at build time
+# so the first request after a scale-to-zero cold start doesn't also pay
+# for a fresh HuggingFace download — same rationale as _xtts_src's
+# Dockerfile baking in the XTTS-v2 weights.
+RUN python -c "\
+import torch; \
+from diffusers import StableVideoDiffusionPipeline; \
+StableVideoDiffusionPipeline.from_pretrained('stabilityai/stable-video-diffusion-img2vid-xt', torch_dtype=torch.float16, variant='fp16')"
+
+# No EXPOSE/HEALTHCHECK — RunPod Serverless workers pull jobs from
+# RunPod's own queue rather than listening for inbound HTTP traffic.
+CMD ["python", "runpod_handler.py"]
