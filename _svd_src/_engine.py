@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# CI trigger nudge — no functional change.
 """
 ═══════════════════════════════════════════════════════════════════════
 SELF-HOSTED STABLE VIDEO DIFFUSION ENGINE — RunPod Serverless build
