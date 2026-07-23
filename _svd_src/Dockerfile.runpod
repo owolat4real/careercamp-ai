@@ -39,6 +39,20 @@ import torch; \
 from diffusers import StableVideoDiffusionPipeline; \
 StableVideoDiffusionPipeline.from_pretrained('stabilityai/stable-video-diffusion-img2vid-xt', torch_dtype=torch.float16, variant='fp16')"
 
+# Worker logs showed the container genuinely re-downloading component
+# files from HuggingFace at runtime instead of using what was just
+# baked in above — the cache wasn't being recognised as a hit for some
+# reason (likely a revision-resolution check that from_pretrained()
+# does over the network by default, even when local files exist,
+# falling back to a fresh fetch here). On this account's connection
+# (~100-300kB/s, observed in worker logs) that alone was enough to
+# blow past RunPod's job timeout without ever finishing. Forcing
+# offline mode makes it use ONLY the baked-in cache, no network
+# involved — if the cache path is ever wrong, this fails immediately
+# and loudly instead of silently re-downloading for minutes.
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+
 # No EXPOSE/HEALTHCHECK — RunPod Serverless workers pull jobs from
 # RunPod's own queue rather than listening for inbound HTTP traffic.
 CMD ["python", "runpod_handler.py"]
