@@ -130,6 +130,19 @@ services:
               capabilities: [gpu]
 
   # ── Ollama (local LLM server) ─────────────────────────────
+  # cs-haiku/cs-sonnet/cs-opus/cs-embed are CUSTOM fine-tunes (see
+  # cs_fixed/training/train_lora.py) — they don't exist on any public
+  # registry, so there is no "ollama pull <name>" for them (there used to
+  # be an ollama-setup service here that pulled generic tinyllama/mistral/
+  # llava by mistake — removed, not the real models this app actually
+  # calls). Instead,
+  # ollama_data is a real Docker volume — populate it ONCE by copying your
+  # local ~/.ollama/models directory into it before first start (see
+  # careercamp-ai/scripts/transfer-models-to-pod.sh), then it persists
+  # across restarts like any other named volume.
+  # OLLAMA_MAX_LOADED_MODELS=4 keeps all 4 models resident simultaneously
+  # instead of the 2-model cap used on the smaller local dev GPU — a 24GB
+  # pod (e.g. RunPod A5000) has plenty of headroom for all ~8.7GB combined.
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -138,34 +151,25 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_MAX_LOADED_MODELS=4
+      - OLLAMA_NUM_PARALLEL=4
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_FLASH_ATTENTION=1
     networks:
       - careernet
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s
       timeout:  5s
       retries:  3
-
-  # ── Ollama model puller (runs once on startup) ────────────
-  ollama-setup:
-    image: ollama/ollama:latest
-    container_name: ollama-setup
-    restart: "no"
-    depends_on:
-      - ollama
-    command: >
-      sh -c "
-        sleep 10 &&
-        ollama pull tinyllama:1.1b &&
-        ollama pull mistral:7b &&
-        ollama pull llava:7b &&
-        echo 'Ollama models ready'
-      "
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
-    networks:
-      - careernet
-    profiles: ["setup"]
 
   # ── Career Studio App ────────────────────────────────────
   careerstudio-app:

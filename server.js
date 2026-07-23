@@ -202,12 +202,16 @@ app.use('/v1/bert',   apiKeyAuth, (req, _, next) => { req.engines = app.locals.e
 app.use('/v1/agent',  apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, agentRoute);
 
 // ── Local-First AI Platform v2.0 routes ───────────────────
-app.use('/v1/infer',      inferenceRoute);
-app.use('/v1/features',   featuresRoute);
-app.use('/v1/tools',      toolsRoute);
-app.use('/v1/memory',     memoryRoute);
-app.use('/v1/developer',  developerRoute);
-app.use('/v1/camp',       campRoute);     // 274-feature map pipeline (PII+memory+ethics+reasoning)
+// These 6 had no apiKeyAuth at all — harmless while this gateway was only
+// ever reachable at localhost:3002, but a real hole once it gets a public
+// IP on a GPU pod (see careercamp-ai/docker-compose.yml) — anyone who found
+// the URL could hit them for free, including /v1/memory and /v1/developer.
+app.use('/v1/infer',      apiKeyAuth, inferenceRoute);
+app.use('/v1/features',   apiKeyAuth, featuresRoute);
+app.use('/v1/tools',      apiKeyAuth, toolsRoute);
+app.use('/v1/memory',     apiKeyAuth, memoryRoute);
+app.use('/v1/developer',  apiKeyAuth, developerRoute);
+app.use('/v1/camp',       apiKeyAuth, campRoute);     // 274-feature map pipeline (PII+memory+ethics+reasoning)
 
 // GPU Resource Manager status — internal use
 app.get('/v1/gpu-status', async (req, res) => {
