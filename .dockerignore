@@ -1,0 +1,35 @@
+# Secrets — NEVER bake into the image
+.env
+.env.*
+!.env.example
+
+# VCS / editor
+.git/
+.github/
+.vscode/
+.idea/
+
+# Dependencies (reinstalled fresh inside the image via npm ci)
+node_modules/
+
+# RunPod Serverless handlers — separate images, own Dockerfiles, not
+# part of this gateway service at all. Copying these in would bloat
+# the build context with unrelated Python/model source for no reason.
+_sadtalker_src/
+_xtts_src/
+_svd_src/
+
+# Local model caches / vendored checkpoints (never present in a fresh
+# clone anyway, but exclude defensively)
+models/.cache/
+models/whisper/
+*.gguf
+*.bin
+*.safetensors
+
+# Logs / misc
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+logs/
