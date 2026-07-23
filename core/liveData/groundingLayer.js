@@ -63,9 +63,18 @@ async function _checkCommunityVerified(countryCode, role, seniority) {
 /* Full Provenance Ledger — fire-and-forget audit log of every number
  * actually shown, so any claim can be traced back after the fact.
  * careercamp-ai has no DB, so this pushes to cs_fixed over HTTP;
- * failures here must never affect the actual user-facing response. */
+ * failures here must never affect the actual user-facing response.
+ * cs_fixed's /api/data-audit/log now requires this shared secret
+ * (previously had no auth at all — anyone could inject fake provenance
+ * records) — set the SAME value for DATA_AUDIT_INTERNAL_SECRET on both
+ * this service and cs_fixed. */
 function _logProvenance(entry) {
-  axios.post(`${DATA_AUDIT_API_URL}/log`, entry, { timeout: 3000 }).catch(() => {})
+  const secret = process.env.DATA_AUDIT_INTERNAL_SECRET
+  if (!secret) return // cs_fixed will reject anyway; skip the doomed request
+  axios.post(`${DATA_AUDIT_API_URL}/log`, entry, {
+    timeout: 3000,
+    headers: { 'x-internal-secret': secret },
+  }).catch(() => {})
 }
 
 /* Which non-salary features require which live data before the AI runs.
