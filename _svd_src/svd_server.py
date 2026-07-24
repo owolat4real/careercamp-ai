@@ -25,21 +25,33 @@ resident until the process exits) and restart it fresh afterward.
 Net effect: real local SVD without extra GPU rental, at the cost of a
 brief talking-head cold-start after each video generation and a
 one-time LLM reload delay on the next chat call.
+
+Async job-queue API, not a single blocking call: a full generation
+(VRAM-freeing + the diffusion run itself) commonly takes well over 100
+seconds, and Cloudflare's tunnel proxy hard-kills any proxied request at
+100s (HTTP 524) regardless of what timeout the client or origin sets —
+confirmed directly against the public endpoint. Submit returns
+immediately with a job id; the caller polls /v1/video/status/{id} (fast,
+never near the timeout) until it reports a result ready to fetch from
+/v1/video/result/{id}. Same shape as the RunPod Serverless client this
+replaces (submit → poll → fetch), so cs_fixed's caller code follows the
+same pattern either way.
 """
 
 import io
 import os
 import re
 import time
-import signal
+import uuid
 import logging
+import threading
 import subprocess
 import tempfile
 
 import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 
 import _engine
 
@@ -150,6 +162,31 @@ async def health():
     }
 
 
+# job_id -> {"status": "processing"|"complete"|"failed", "video_path": str|None, "error": str|None}
+_jobs = {}
+_JOB_DIR = tempfile.gettempdir()
+
+
+def _run_generation(job_id: str, image_bytes: bytes, motion_bucket_id: int, cfg_scale: float, seed: int, fps: int):
+    t0 = time.time()
+    stopped_servers = _make_room()
+    try:
+        video_bytes = _engine.generate(
+            image_bytes, motion_bucket_id=motion_bucket_id, cfg_scale=cfg_scale, seed=seed, fps=fps,
+        )
+        path = os.path.join(_JOB_DIR, f"svd_{job_id}.mp4")
+        with open(path, "wb") as f:
+            f.write(video_bytes)
+        elapsed = round(time.time() - t0, 1)
+        logger.info(f"[SVD] Job {job_id} complete in {elapsed}s")
+        _jobs[job_id] = {"status": "complete", "video_path": path, "inference_seconds": elapsed}
+    except Exception as e:
+        logger.warning(f"[SVD] Job {job_id} failed: {e}", exc_info=True)
+        _jobs[job_id] = {"status": "failed", "error": str(e)}
+    finally:
+        _restart_aux_servers(stopped_servers)
+
+
 @app.post("/v1/video/image-to-video")
 async def image_to_video(
     image: UploadFile = File(...),
@@ -158,35 +195,37 @@ async def image_to_video(
     seed: int = Form(default=0),
     fps: int = Form(default=7),
 ):
-    t0 = time.time()
     image_bytes = await image.read()
+    job_id = uuid.uuid4().hex[:16]
+    _jobs[job_id] = {"status": "processing"}
+    threading.Thread(
+        target=_run_generation,
+        args=(job_id, image_bytes, motion_bucket_id, cfg_scale, seed, fps),
+        daemon=True,
+    ).start()
+    return {"id": job_id, "status": "processing"}
 
-    stopped_servers = _make_room()
 
-    try:
-        video_bytes = _engine.generate(
-            image_bytes,
-            motion_bucket_id=motion_bucket_id,
-            cfg_scale=cfg_scale,
-            seed=seed,
-            fps=fps,
-        )
-    except Exception as e:
-        logger.warning(f"[SVD] Generation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=503, detail=str(e))
-    finally:
-        _restart_aux_servers(stopped_servers)
+@app.get("/v1/video/status/{job_id}")
+async def video_status(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job id")
+    if job["status"] == "complete":
+        return {"status": "complete", "video_url": f"/v1/video/result/{job_id}",
+                "inference_seconds": job.get("inference_seconds", 0)}
+    if job["status"] == "failed":
+        return {"status": "failed", "error": job["error"]}
+    return {"status": "processing"}
 
-    elapsed = round(time.time() - t0, 1)
-    logger.info(f"[SVD] Generated video in {elapsed}s")
-    return Response(
-        content=video_bytes,
-        media_type="video/mp4",
-        headers={
-            "X-Inference-Seconds": str(elapsed),
-            "X-Engine": "svd-selfhosted",
-        },
-    )
+
+@app.get("/v1/video/result/{job_id}")
+async def video_result(job_id: str):
+    job = _jobs.get(job_id)
+    if not job or job["status"] != "complete":
+        raise HTTPException(status_code=404, detail="Video not ready or job unknown")
+    return FileResponse(job["video_path"], media_type="video/mp4",
+                         headers={"X-Engine": "svd-selfhosted"})
 
 
 if __name__ == "__main__":
