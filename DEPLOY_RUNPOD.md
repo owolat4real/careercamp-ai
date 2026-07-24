@@ -1,109 +1,186 @@
 # Deploying careercamp-ai + Ollama to a RunPod GPU Pod
 
 Moves the internal AI models (cs-haiku, cs-sonnet, cs-opus, cs-embed —
-~8.7GB combined) off "only works when your own machine is on" and onto a
+~6.7GB combined) off "only works when your own machine is on" and onto a
 persistent GPU pod that Render (cs_fixed) can reach 24/7.
+
+**Note:** everything below is native (no Docker) and uses direct-TCP SSH
++ a Cloudflare Tunnel — not the docker-compose / rsync-over-proxy /
+RunPod-HTTP-port approach this doc originally described. Those didn't
+work in practice (see the "why not" notes inline) and this file was
+updated to match what was actually run.
 
 ## 1. Provision the pod
 
 - runpod.io → **Pods** (not Serverless) → Deploy
-- GPU: **RTX A5000, 24GB VRAM** — comfortably fits all 4 models (~8.7GB)
-  resident simultaneously with room to spare. Community Cloud pricing
-  (~$0.16/hr, ~$115/mo) unless you specifically want Secure Cloud's
-  reliability guarantees (~$0.27/hr, ~$195/mo).
-- Template: **RunPod PyTorch** (or any CUDA-enabled base image with Docker)
-- Enable **SSH access** on the pod (Connect tab → toggle SSH) — needed for
-  the model transfer step below.
-- Disk: 30GB+ (8.7GB of models + Docker images + headroom)
+- GPU: an **RTX A4000 (16GB VRAM)** comfortably fits all 4 models
+  resident simultaneously (~8GB used, ~8GB free) — no need for a bigger
+  card. Cheap tiers (A5000, A4500, RTX 2000 Ada) frequently show
+  "Instance not available" at click time; availability fluctuates in
+  real time, so just retry a few GPU types if your first pick is out of
+  stock.
+- Template: **Runpod Pytorch** (any CUDA-enabled base image works — Docker
+  itself is *not* available inside a RunPod pod, since the pod is
+  already a container; docker-compose approaches won't work here)
+- Container disk: **30GB+** (set this correctly at pod **creation** time
+  — resizing a running pod's disk via `runpodctl pod update` destabilizes
+  it, sometimes permanently; recreate the pod instead of resizing)
+- Ports at creation: `8888/http,22/tcp` is enough. Do **not** add more
+  ports later via `runpodctl pod update --ports` — like the disk resize,
+  this triggers a full container reset that wipes everything outside the
+  pod's actual persistent volume (which, unless you explicitly configure
+  a network volume at creation, is *not* what `/workspace` is — it's
+  ordinary container disk and is just as ephemeral as the rest of the
+  container). Use a Cloudflare Tunnel instead (step 5) to expose new
+  ports without ever touching the pod's port config again.
+- Connect tab shows two SSH options: the `ssh.runpod.io` proxy is
+  PTY-only (rejects non-interactive commands and SCP/SFTP outright) —
+  use **"SSH over exposed TCP"** instead (`ssh root@<ip> -p <port>`),
+  which supports both.
 
-## 2. Get the pod running with Docker Compose
-
-SSH into the pod (command shown on its Connect tab), then:
+## 2. Install Ollama + Node.js natively on the pod
 
 ```bash
-git clone https://github.com/owolat4real/careercamp-ai.git
-cd careercamp-ai
-cp .env.example .env   # fill in the values from step 3 below
-docker-compose up -d careercamp-gateway ollama
+ssh root@<pod-ip> -p <ssh-port> -i ~/.ssh/id_ed25519
+
+apt-get update
+apt-get install -y zstd pciutils lshw curl   # zstd: Ollama's installer needs it to
+                                              # extract its own release archive.
+                                              # pciutils/lshw: needed for Ollama to
+                                              # detect the GPU — without them it
+                                              # silently falls back to CPU-only.
+curl -fsSL https://ollama.com/install.sh | sh   # should print "NVIDIA GPU installed"
+
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
 ```
 
-This starts **only** the gateway (port 3002) + Ollama (port 11434) — not
-the full stack (no nginx, no careerstudio-app; cs_fixed stays on Render).
+## 3. Clone the repo and transfer the custom models
 
-## 3. Environment variables for the pod's `.env`
+```bash
+mkdir -p /workspace/careercamp-ai /workspace/ollama-models
+git clone https://github.com/owolat4real/careercamp-ai.git /workspace/careercamp-ai
+```
 
-Copy these from your local `cs_fixed/.env` (same values, so the auth keys
-match what cs_fixed will send):
+These 4 models are custom fine-tunes with no public registry — there's
+no `ollama pull cs-sonnet`. From your **local machine**, stage just the
+4 models' manifests + deduplicated blobs (much smaller than your whole
+`~/.ollama/models`), then `scp` them over directly:
+
+```bash
+scp -r ~/cs-models-stage/* root@<pod-ip>:/workspace/ollama-models/ -P <ssh-port>
+```
+
+(`scripts/transfer-models-to-pod.sh`'s rsync-over-proxy approach doesn't
+work — the proxy connection type used there is PTY-only. Plain `scp`
+over the direct-TCP SSH connection is simpler and does work.)
+
+## 4. Start Ollama with all 4 models resident
+
+```bash
+OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 \
+  OLLAMA_NUM_PARALLEL=1 OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 \
+  nohup ollama serve > /tmp/ollama.log 2>&1 & disown
+```
+
+`OLLAMA_NUM_PARALLEL=1` matters — a higher value reserves KV-cache
+memory per *concurrent request slot* per model, which can force the
+larger models to partially spill onto CPU even when there's nominally
+enough total VRAM.
+
+If a specific model (check via `ollama ps`) shows `<100% CPU/GPU` split
+instead of `100% GPU`, check whether its Modelfile hardcodes a low
+`num_gpu` value (`ollama show <model> --parameters`) — this pins the
+number of GPU-resident layers independent of how much VRAM is actually
+free, and is a model-config issue, not a capacity one. Fix by rebuilding
+it with a higher (or `99`, meaning "all") value:
+
+```bash
+ollama show <model> --modelfile > /tmp/model.modelfile
+sed -i 's/PARAMETER num_gpu .*/PARAMETER num_gpu 99/' /tmp/model.modelfile
+ollama create <model> -f /tmp/model.modelfile
+```
+
+Load the largest model first (while the most VRAM is free), then the
+rest, and verify with `ollama ps` + `nvidia-smi`.
+
+## 5. Set up `.env` and start the gateway
+
+Copy the same values from `cs_fixed/.env`:
 
 ```
 CAREERCAMP_PORT=3002
-OLLAMA_URL=http://ollama:11434
+OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_MODELS=/workspace/ollama-models
 CAREERCAMP_API_KEY=<same value as in cs_fixed/.env>
 CS_TRANSFORMER_API_KEY=<same value as in cs_fixed/.env>
 CAREERCAMP_SECRET_KEY=<same value as in cs_fixed/.env>
-INTERNAL_SECRET=<same value as in cs_fixed/.env>
-GROQ_API_KEY=<same value — external fallback if internal models are ever down>
+GROQ_API_KEY=<same value>
 OPENROUTER_API_KEY=<same value>
 ALLOWED_ORIGINS=https://careerstudiomax.com,https://www.careerstudiomax.com
 ```
 
-**Important:** `apiKeyAuth` (server.js) fails OPEN if none of
-`CAREERCAMP_API_KEY`/`CS_TRANSFORMER_API_KEY`/`CAREERCAMP_SECRET_KEY` are
-set — double-check these are actually populated on the pod before
-exposing it publicly, or every route is unauthenticated.
+```bash
+cd /workspace/careercamp-ai
+npm install
+nohup node server.js > /tmp/gateway.log 2>&1 & disown
+```
 
-## 4. Transfer your custom models onto the pod
+## 6. Expose the gateway with a Cloudflare Tunnel
 
-These models are custom fine-tunes with no public registry — there's no
-`ollama pull cs-sonnet`. From your **local machine** (not the pod):
+Don't use RunPod's own port-exposure UI/API for this (see the warning in
+step 1 — it resets the container). Instead:
 
 ```bash
-cd careercamp-ai/scripts
-./transfer-models-to-pod.sh <pod-ip> <ssh-port> [path-to-ssh-key]
+curl -fsSL -o /usr/local/bin/cloudflared \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x /usr/local/bin/cloudflared
+nohup cloudflared tunnel --url http://localhost:3002 > /tmp/cloudflared.log 2>&1 & disown
+grep trycloudflare /tmp/cloudflared.log   # your public URL
 ```
 
-(pod IP/port/key come from the same Connect tab as step 1). This rsyncs
-your local `~/.ollama` into the pod's running `ollama` container and
-restarts it. Verify all 4 models show up in the script's final `ollama
-list` output.
+This free "quick tunnel" URL is stable as long as the `cloudflared`
+process itself doesn't restart (individual network reconnects don't
+change it) — but it **does** change if the process (or the whole pod)
+restarts, which means Render's env vars need updating again at that
+point. For a permanent, stable URL tied to your own domain, set up a
+[named Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
+instead, authenticated to your Cloudflare account.
 
-## 5. Expose the gateway publicly
+`/workspace/start-all.sh` (written during setup) restarts Ollama + the
+gateway + a fresh tunnel with one command if the pod ever reboots —
+just note the tunnel URL will be different afterward.
 
-RunPod → your pod → **Connect** → HTTP Service → expose port **3002**
-only. Do **not** expose port 11434 (raw Ollama, no auth of its own) —
-only the gateway, which now has `apiKeyAuth` on every `/v1/*` route.
+## 7. Point Render at the pod
 
-Copy the resulting public URL (something like
-`https://<pod-id>-3002.proxy.runpod.net`).
-
-## 6. Point Render at the pod
-
-In Render → cs_fixed service → Environment, change:
+In Render → `career-studio` service → Environment:
 
 ```
-CAMP_API_URL=https://<pod-id>-3002.proxy.runpod.net/v1
-CAREERCAMP_BASE_URL=https://<pod-id>-3002.proxy.runpod.net/v1
-CAREERCAMP_URL=https://<pod-id>-3002.proxy.runpod.net
+CAMP_API_URL=<your-tunnel-url>/v1
+CAREERCAMP_BASE_URL=<your-tunnel-url>/v1
 ```
 
-(previously all three pointed at `http://localhost:3002`, which on
-Render's own servers resolves to nothing — that's the root cause of the
-internal model always failing in production up to now.)
+(There is no separate `CAREERCAMP_URL` variable in the codebase — just
+these two. Previously neither was set at all, which silently defaulted
+to `http://localhost:3002/v1` — meaningless on Render's own servers, and
+the actual root cause of internal models always falling through to
+Groq/OpenRouter/Anthropic in production before this setup.)
 
-Save → Render auto-redeploys → internal models should now actually
-respond instead of always falling through to Groq/OpenRouter/Anthropic.
+Save → Render auto-redeploys (or trigger one manually via the API if the
+GitHub webhook is slow) → internal models should now actually respond.
 
-## 7. Verify
+## 8. Verify
 
 ```bash
-curl https://<pod-id>-3002.proxy.runpod.net/health
-curl -X POST https://<pod-id>-3002.proxy.runpod.net/v1/chat/completions \
+curl <your-tunnel-url>/health
+curl -X POST <your-tunnel-url>/v1/chat/completions \
   -H "Authorization: Bearer <CAREERCAMP_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"model":"cs-sonnet","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-Then check `careerstudiomax.com`'s Brain AI widget — server logs (or the
-SSE `engine` field in the response) should show `camp:careerlm-*` or
-similar succeeding instead of immediately falling through to
-`openrouter`/`groq-retry`.
+Check the response's `_engine` field — it should say `"ollama"`, not
+`"groq"`/`"openrouter"`. Then tail `/tmp/gateway.log` on the pod while
+using the site for real to confirm production traffic is actually
+landing (look for real `User-Agent`s like `OpenAI/JS` — that's Render's
+client library, not your own test curls).
