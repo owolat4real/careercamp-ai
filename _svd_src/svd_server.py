@@ -91,6 +91,20 @@ def _evict_ollama():
             # precondition generation can't proceed without.
             logger.warning(f"[SVD] Could not evict {model}: {e}")
 
+    # The keep_alive:0 request returning does NOT mean the driver has
+    # reclaimed the VRAM yet — Ollama's unload is asynchronous. Confirmed
+    # in production: without this wait, _stop_aux_servers()'s very next
+    # _free_mib() check reads a stale pre-eviction number, wrongly
+    # concludes no aux server needs stopping, and generation OOMs a few
+    # seconds later once the real (still-occupied) state catches up.
+    # Poll briefly (mirrors _stop_aux_servers()'s own settle-wait below)
+    # instead of a fixed sleep, so this costs nothing once eviction has
+    # genuinely landed.
+    for _ in range(10):
+        if _free_mib() >= MIN_FREE_MIB_TARGET:
+            break
+        time.sleep(0.5)
+
 
 # (pattern to pkill, cwd, argv, log path) for each auxiliary GPU process
 # that can be safely stopped-and-restarted around a generation — unlike

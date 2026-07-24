@@ -211,22 +211,36 @@ async def health():
     }
 
 # ── LLM inference ──────────────────────────────────────────
+# Only careerlm-nano (Phi-3-mini, 3.8B/~7.6GB fp16) is even plausibly
+# loadable here alongside Ollama + SVD + TTS + vision, all resident on
+# this pod's single 16GB card. careerlm-small/base/large/xl were mapped
+# to 7B/8B/8x7B/72B models (14GB-144GB+ fp16) with NO size gating before
+# this fix — confirmed in production: a request for careerlm-large
+# triggered AutoModelForCausalLM.from_pretrained() to actually start
+# downloading Mixtral-8x7B, filled the pod's 60GB local disk to 100%
+# (33GB partial download alone), and broke unrelated services (SVD's
+# ffmpeg write failing with "No space left on device"). This tier is
+# also redundant, not just dangerous — Groq and OpenRouter already serve
+# every model tier reliably as external fallbacks (see engine/llm.js's
+# waterfall, steps 3-4), so there is no real capability lost by refusing
+# the sizes that can't work here instead of attempting them.
+HF_MAP = {
+    "careerlm-nano": "microsoft/Phi-3-mini-4k-instruct",
+}
+
 @app.post("/v1/infer")
 async def infer(req: InferRequest):
     try:
-        # Map model ID to HF model name
-        HF_MAP = {
-            "careerlm-nano":  "microsoft/Phi-3-mini-4k-instruct",
-            "careerlm-small": "mistralai/Mistral-7B-Instruct-v0.3",
-            "careerlm-base":  "meta-llama/Llama-3.1-8B-Instruct",
-            "careerlm-large": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-        }
-        hf_model = HF_MAP.get(req.model, HF_MAP["careerlm-base"])
+        hf_model = HF_MAP.get(req.model)
+        if not hf_model:
+            raise HTTPException(status_code=503, detail=f"Model '{req.model}' too large for local HF inference on this GPU — use Ollama or an external provider instead.")
         pipe = load_llm(hf_model)
         prompt = f"<|system|>\n{req.system}\n<|user|>\n{req.prompt}\n<|assistant|>\n"
         result = pipe(prompt, max_new_tokens=req.max_tokens, temperature=req.temperature, do_sample=True, return_full_text=False)
         text = result[0]["generated_text"]
         return {"text": text, "model": req.model, "engine": "huggingface"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
 
