@@ -151,13 +151,32 @@ def _stop_aux_servers() -> list:
 
 
 def _restart_aux_servers(stopped: list):
+    # Confirmed in production: right after a generation finishes, SVD's own
+    # model is still fully resident (its whole point is staying loaded
+    # between requests), which can leave too little VRAM for the aux
+    # server's own model load to succeed — talkinghead_server.py OOM'd on
+    # its very first restart attempt and stayed down silently until this
+    # was noticed and fixed by hand. One retry after a short wait covers
+    # the common case (VRAM settling a little as SVD's own allocator frees
+    # transient generation buffers); if it still fails, log loudly rather
+    # than leave it silently dead — selfOps.js's health-check cron on the
+    # cs_fixed side will also catch and alert on this via TALKINGHEAD_BASE_URL.
     for cwd, argv, log in stopped:
-        subprocess.Popen(
-            argv, cwd=cwd,
-            stdout=open(log, "a"), stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        logger.info(f"[SVD] Restarting {' '.join(argv)} in background")
+        for attempt in (1, 2):
+            proc = subprocess.Popen(
+                argv, cwd=cwd,
+                stdout=open(log, "a"), stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            logger.info(f"[SVD] Restarting {' '.join(argv)} in background (attempt {attempt})")
+            time.sleep(5)
+            if proc.poll() is None:
+                break  # still running after 5s — didn't crash on startup
+            if attempt == 1:
+                logger.warning(f"[SVD] '{' '.join(argv)}' died immediately after restart (exit {proc.returncode}) — likely insufficient VRAM, retrying once after a short wait")
+                time.sleep(5)
+            else:
+                logger.warning(f"[SVD] '{' '.join(argv)}' failed to stay up after 2 attempts — leaving it down, needs manual restart")
 
 
 def _make_room():
