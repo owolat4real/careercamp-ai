@@ -46,7 +46,7 @@ const OLLAMA_TIMEOUT = 45000;
 const MODELS = {
   'cs-sonnet':     { ollamaName: 'cs-sonnet',     maxTokens: 4096, contextWindow: 32768, tier: 'quality' },
   'cs-haiku':      { ollamaName: 'cs-haiku',      maxTokens: 1024, contextWindow: 16384, tier: 'fast'    },
-  'careerlm-nano': { ollamaName: 'careerlm-nano', maxTokens: 512,  contextWindow: 8192,  tier: 'nano'    },
+  'careerlm-nano': { ollamaName: 'cs-haiku',      maxTokens: 512,  contextWindow: 8192,  tier: 'nano'    },
 };
 
 /* ── TASK → MODEL MAP ──────────────────────────────────────────── */

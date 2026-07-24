@@ -452,7 +452,8 @@ async function infer(prompt, system, modelId, opts = {}) {
 
   if (ollamaAvailable) {
     const tried = new Set();
-    const candidates = [resolveOllamaTag(modelId), ...LOCAL_FALLBACK_CHAIN].slice(0, 2);
+    const preferredTag = resolveOllamaTag(modelId);
+    const candidates = [preferredTag, ...LOCAL_FALLBACK_CHAIN.filter(t => t !== preferredTag)].slice(0, 2);
     for (const tag of candidates) {
       if (tried.has(tag)) continue;
       tried.add(tag);
@@ -471,12 +472,8 @@ async function infer(prompt, system, modelId, opts = {}) {
     } catch (e) { console.warn('[CareerLM:mlserver]', e.message?.slice(0,60)); }
   }
 
-  if (!ALLOW_EXTERNAL_AI) {
-    throw new Error('All internal CareerLM engines unavailable (external AI disabled)');
-  }
-
   // 3. Groq (fast cloud, reliable, free tier)
-  if (groq) {
+  if (ALLOW_EXTERNAL_AI && groq) {
     try {
       const res = await groq.chat.completions.create({
         model: groqId, max_tokens: opts.maxTokens || 4096, temperature: opts.temp ?? 0.78,
@@ -488,13 +485,15 @@ async function infer(prompt, system, modelId, opts = {}) {
   }
 
   // 4. OpenRouter (free tier — DeepSeek fallback)
-  try {
-    const text = await orInfer(prompt, system, orId, opts);
-    if (text && text.length > 20) return _withSchema({ text, model: orId, engine: 'openrouter', task });
-  } catch (e) { console.warn('[CareerLM:openrouter]', e.message?.slice(0,60)); }
+  if (ALLOW_EXTERNAL_AI) {
+    try {
+      const text = await orInfer(prompt, system, orId, opts);
+      if (text && text.length > 20) return _withSchema({ text, model: orId, engine: 'openrouter', task });
+    } catch (e) { console.warn('[CareerLM:openrouter]', e.message?.slice(0,60)); }
+  }
 
   // 5. HuggingFace (only if token is set — avoids 45s auth timeout)
-  if (HF_TOKEN) {
+  if (ALLOW_EXTERNAL_AI && HF_TOKEN) {
     try {
       const text = await hfInfer(prompt, system, hfId, opts);
       if (text && text.length > 20) return _withSchema({ text, model: hfId, engine: 'huggingface', task });
@@ -523,7 +522,8 @@ async function* stream(prompt, system, modelId, opts = {}) {
   // Capped at 2 attempts (20s each = 40s worst case) before cloud fallback.
   if (ollamaAvailable) {
     const tried = new Set();
-    const candidates = [resolveOllamaTag(modelId), ...LOCAL_FALLBACK_CHAIN].slice(0, 2);
+    const preferredTag = resolveOllamaTag(modelId);
+    const candidates = [preferredTag, ...LOCAL_FALLBACK_CHAIN.filter(t => t !== preferredTag)].slice(0, 2);
     for (const tag of candidates) {
       if (tried.has(tag)) continue;
       tried.add(tag);
