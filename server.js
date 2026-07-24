@@ -119,16 +119,27 @@ app.locals.engines = {
 };
 
 // ── API key authentication ─────────────────────────────────
+// This gateway is reachable over a public Cloudflare tunnel, so an empty
+// validKeys list must NEVER mean "let everyone in" — that was a real bug:
+// before any key existed in this process's env, every request (including
+// ones with no Authorization header at all) was silently allowed through.
+// Now a missing configuration fails CLOSED instead of open.
+const VALID_GATEWAY_KEYS = [
+  process.env.CAREERCAMP_API_KEY || '',
+  process.env.CS_TRANSFORMER_API_KEY || '',
+  process.env.CAREERCAMP_SECRET_KEY || '',
+].filter(Boolean);
+
+if (!VALID_GATEWAY_KEYS.length) {
+  console.error('[FATAL] No API key configured (CAREERCAMP_API_KEY / CS_TRANSFORMER_API_KEY / CAREERCAMP_SECRET_KEY). Refusing to start with all endpoints unauthenticated.');
+  process.exit(1);
+}
+
 function apiKeyAuth(req, res, next) {
   const key = (req.headers.authorization || '').replace('Bearer ', '') ||
               req.query.api_key || req.headers['x-api-key'];
-  const validKeys = [
-    process.env.CAREERCAMP_API_KEY || '',
-    process.env.CS_TRANSFORMER_API_KEY || '',
-    process.env.CAREERCAMP_SECRET_KEY || '',
-  ].filter(Boolean);
 
-  if (!validKeys.length || validKeys.some(k => k === key)) {
+  if (VALID_GATEWAY_KEYS.some(k => k === key)) {
     return next();
   }
   res.status(401).json({ error: { message: 'Invalid API key', type: 'authentication_error', code: 401 } });
