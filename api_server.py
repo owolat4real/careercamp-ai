@@ -295,19 +295,24 @@ async def tts(req: TTSRequest):
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             out_path = tmp.name
         # XTTS-v2 is multi-speaker and raises if neither speaker nor speaker_wav
-        # is given. req.voice previously went unused, so every call threw and
-        # silently fell through to the paid ElevenLabs fallback. engine/voice.js
-        # now sends one of XTTS-v2's real built-in speaker names (verified
-        # directly against the checkpoint's speakers_xtts.pth file — see
-        # engine/voice.js's VOICES comment), so the normal path matches here
-        # on the first try; this fallback to the first available speaker only
-        # exists as a safety net against a future typo/edit, not the everyday
-        # case anymore.
-        preset_speakers = getattr(tts_model, "speakers", None) or []
-        speaker = req.voice if req.voice in preset_speakers else (preset_speakers[0] if preset_speakers else None)
+        # is given. The named-speaker path (tts_model.speakers / `speaker=...`)
+        # depends on TTS==0.22.0 correctly populating speaker_manager from the
+        # downloaded speakers_xtts.pth checkpoint — in practice that property
+        # comes back empty/None on this install even though the checkpoint
+        # genuinely contains all 58 real speaker embeddings (verified directly
+        # against the .pth file), so `is_multi_speaker` never trips and every
+        # named-speaker call raises "no speaker provided". Using speaker_wav
+        # (XTTS's primary, well-supported voice-cloning mode — a short
+        # reference clip) sidesteps that broken code path entirely. One
+        # shared reference voice for now (see /workspace/voice-refs/) until
+        # distinct per-persona reference clips are recorded/sourced.
+        ref_dir = os.environ.get("VOICE_REF_DIR", "/workspace/voice-refs")
+        speaker_wav = os.path.join(ref_dir, "default.wav")
+        if not os.path.exists(speaker_wav):
+            speaker_wav = None
         tts_kwargs = {"text": req.text, "language": req.language, "file_path": out_path}
-        if speaker:
-            tts_kwargs["speaker"] = speaker
+        if speaker_wav:
+            tts_kwargs["speaker_wav"] = speaker_wav
         tts_model.tts_to_file(**tts_kwargs)
         with open(out_path, "rb") as f:
             audio_data = f.read()
