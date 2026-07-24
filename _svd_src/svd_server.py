@@ -65,7 +65,17 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 # no explicit reload needed.
 MODELS_TO_EVICT = ["cs-opus", "cs-sonnet", "cs-embed", "llava-phi3"]
 
-MIN_FREE_MIB_TARGET = 12000  # measured SVD-XT peak (~10-11GB) + margin
+MIN_FREE_MIB_TARGET = 13800
+# Measured SVD-XT peak ~10-11GB; the 12000 figure this used to be worked
+# when the ML server (api_server.py) only had BERT resident. Confirmed
+# live: as more of its lazy-loaded models get exercised over a session
+# (TTS, the 4-bit vision fallback), its own resident footprint grows and
+# never shrinks (nothing ever evicts an individual model from api_server's
+# _models dict, only the whole process stopping does) - a real OOM
+# happened with only 1.08GB free even after stopping talkinghead alone,
+# because 12000 was judged "enough" without accounting for that growth.
+# Raising the target forces stopping api_server.py too in cases like this,
+# releasing its entire footprint instead of just talkinghead's.
 
 
 def _free_mib() -> int:
