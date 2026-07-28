@@ -413,8 +413,17 @@ function _ieGroqPool() { return _IE_GROQ_POOL.filter(_ieGroqAvail); }
 // Circuit breaker — opens after 4 consecutive total failures (90s cooldown)
 const _ieCB = { failures: 0, openUntil: 0, THRESHOLD: 4, COOLDOWN_MS: 90_000 };
 
+// Platform Rule 3.1 — FREE_ONLY_MODE=true must mean ZERO calls to a paid
+// provider, ever. Mirrors engine/featureModelMap.js's routeSummary()
+// (`freeOnly = process.env.FREE_ONLY_MODE !== 'false'`, i.e. free-only is
+// the DEFAULT unless explicitly disabled) — that function only describes
+// the intended chain in a log string, it never gated anything. This is
+// the one flag actual call sites must check.
+function _freeOnlyMode() { return process.env.FREE_ONLY_MODE !== 'false'; }
+
 /* ── EXTERNAL FALLBACK (blocking) ───────────────────────────────── */
-// Priority: internal Ollama (caller) → Groq pool → Anthropic → OpenRouter → offline
+// Priority: internal Ollama (caller) → Groq pool → Anthropic (skipped
+// under FREE_ONLY_MODE) → OpenRouter → offline
 async function _externalFallback(task, messages, maxTokens) {
   const inputText = messages.at(-1)?.content || '';
 
@@ -448,8 +457,17 @@ async function _externalFallback(task, messages, maxTokens) {
   }
 
   // ── 2. Anthropic — complexity-aware model selection ──
+  // BUG FIX (Platform Rule 3.1): this call fired whenever ANTHROPIC_API_KEY
+  // was set, with NO check against FREE_ONLY_MODE — confirmed live that a
+  // real key is configured, meaning any request that exhausted Groq (a
+  // real, observed, recurring condition — see brain.js's own Groq-quota
+  // cooldown tracking) silently fell through to a real paid Anthropic call
+  // even with FREE_ONLY_MODE at its true-by-default value. The function's
+  // own header comment ("Groq → OpenRouter ONLY if all local fail", line
+  // 14) already documented the INTENDED free-only behavior; the code just
+  // never enforced it.
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (anthropicKey && !anthropicKey.includes('your-')) {
+  if (!_freeOnlyMode() && anthropicKey && !anthropicKey.includes('your-')) {
     const anthropicModel = maxTokens > 1500
       ? (process.env.CLAUDE_MODEL || 'claude-sonnet-4-6')
       : 'claude-haiku-4-5-20251001';
