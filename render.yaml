@@ -4,7 +4,14 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
-    autoDeploy: true
+    # Disabled — real deploys are now gated on the main career-studio repo's
+    # .github/workflows/ci.yml `deploy` job, which calls Render's Deploy API
+    # directly after the Platform Rules 3.1/4.1/5.1 CI gates + smoke tests
+    # pass. Set to false here and via a direct API call on the live service
+    # (render.yaml Blueprint sync isn't reliably applied to the live
+    # service — confirmed on the sibling career-studio service, don't trust
+    # editing this file alone to change live behavior).
+    autoDeploy: false
     envVars:
       - key: NODE_ENV
         value: production

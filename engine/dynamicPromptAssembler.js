@@ -136,7 +136,15 @@ class DynamicPromptAssembler {
 
   getCategory(featureId = '', taskType = '') {
     if (!featureId && !taskType) return 'developer';
-    const f = featureId.toLowerCase();
+    // BUG FIX: featureId defaults to null (not omitted) in engine/
+    // inferenceEngine.js's infer() ({ featureId = null, ... } destructured
+    // params), and JS default parameters only apply to an omitted/
+    // undefined argument, never to an explicitly-passed null — so this
+    // function's own `featureId = ''` default never actually fired for
+    // that real call shape, and .toLowerCase() crashed on null whenever a
+    // caller passed a taskType but no featureId. Confirmed live while
+    // building cs_fixed/test/ci-gates/costCompliance.gate.test.js.
+    const f = (featureId || '').toLowerCase();
     if (f.startsWith('resume'))      return 'resume';
     if (f.startsWith('cover'))       return 'cover_letter';
     if (f.startsWith('interview'))   return 'interview';
