@@ -232,15 +232,25 @@ const GROQ_MAP = {
   'careerscore-v1':  'llama-3.1-8b-instant',
 };
 
-// OpenRouter model fallbacks — verified working 2026
+// OpenRouter model fallbacks. All 3 slugs previously here
+// (deepseek/deepseek-v4-flash:free, meta-llama/llama-3.3-70b-instruct:free,
+// qwen/qwen3-next-80b-a3b-instruct:free) are confirmed dead — OpenRouter
+// discontinued them (live 404: "This model is unavailable for free... use
+// this slug instead" pointing at the paid version). Every one of this
+// engine's inference calls was silently falling through to the canned
+// "Temporary Service Interruption" offline response as a result (traced
+// live via routes/interviewEngine.js -> gapAnalyser.js -> here, but this
+// map is shared by every caller of infer() in this file, not just that
+// one). openai/gpt-oss-20b:free is confirmed live and working — same fix
+// already applied on the cs_fixed side (middleware/brain.js and others).
 const OR_MAP = {
-  'careerlm-nano':   'deepseek/deepseek-v4-flash:free',
-  'careerlm-small':  'deepseek/deepseek-v4-flash:free',
-  'careerlm-base':   'deepseek/deepseek-v4-flash:free',
-  'careerlm-large':  'meta-llama/llama-3.3-70b-instruct:free',
-  'careerlm-xl':     'qwen/qwen3-next-80b-a3b-instruct:free',
-  'careeragent-v1':  'deepseek/deepseek-v4-flash:free',
-  'careerscore-v1':  'deepseek/deepseek-v4-flash:free',
+  'careerlm-nano':   'openai/gpt-oss-20b:free',
+  'careerlm-small':  'openai/gpt-oss-20b:free',
+  'careerlm-base':   'openai/gpt-oss-20b:free',
+  'careerlm-large':  'openai/gpt-oss-20b:free',
+  'careerlm-xl':     'openai/gpt-oss-20b:free',
+  'careeragent-v1':  'openai/gpt-oss-20b:free',
+  'careerscore-v1':  'openai/gpt-oss-20b:free',
 };
 
 let ollamaAvailable   = false;

@@ -41,6 +41,14 @@ ${jdText.slice(0, 2000)}`;
     const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim();
     const match   = cleaned.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
+    // Confirmed live: when every inference engine is unavailable, infer()
+    // returns a real 200-shaped result carrying the canned "Temporary
+    // Service Interruption" text (engine:'offline'), not an error -- this
+    // silently fell through to the generic fallback below with zero log
+    // trace, indistinguishable from a genuine "AI wrote a good plan we
+    // just couldn't parse" case. Logged explicitly so this is diagnosable
+    // without having to reproduce it interactively.
+    console.warn('[GAP-ANALYSER] No JSON in response (engine=' + (result.engine || 'unknown') + ') — falling back:', raw.slice(0, 150));
   } catch (err) {
     console.error('[GAP-ANALYSER] Plan build error:', err.message);
   }

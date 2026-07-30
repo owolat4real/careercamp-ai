@@ -337,7 +337,9 @@ async function externalFallback(feature, messages) {
   const orKey = process.env.OPENROUTER_API_KEY;
   if (orKey) {
     try {
-      const orModel = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
+      // meta-llama/llama-3.1-8b-instruct:free is confirmed dead (OpenRouter
+      // discontinued it — same fix as engine/llm.js's OR_MAP above).
+      const orModel = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free';
       const resp = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
         model: orModel, messages, max_tokens: feature.maxTokens, temperature: 0.7,
       }, {
