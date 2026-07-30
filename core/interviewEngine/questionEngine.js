@@ -8,6 +8,17 @@
 ═══════════════════════════════════════════════════════════════════ */
 const llm = require('../../engine/llm');
 
+// Default inference calls — preserved exactly as before for any standalone
+// reuse of this file. cs_fixed/routes/interviewEngine.js overrides these
+// with an adapter onto middleware/brain.js's infer() — see gapAnalyser.js
+// for why this file must not require cs_fixed directly.
+async function defaultInferBase(prompt, system, opts) {
+  return llm.infer(prompt, system, 'careerlm-base', opts);
+}
+async function defaultInferNano(prompt, system, opts) {
+  return llm.infer(prompt, system, 'careerlm-nano', opts);
+}
+
 const PHASE_ORDER          = ['technical', 'behavioural', 'soft_skill'];
 const QUESTIONS_PER_PHASE  = 3;
 const FOLLOW_UP_SCORE_GATE = 65;
@@ -36,7 +47,7 @@ function selectNextTopic(phase, interviewPlan, qaHistory) {
 }
 
 /* ── GENERATE THE NEXT QUESTION ─────────────────────────────── */
-async function generateNextQuestion(session) {
+async function generateNextQuestion(session, inferFn = defaultInferBase) {
   const { interviewPlan, qaHistory, currentPhase, cvText, jdText, role } = session;
   const { topic, isFollowUp, prevAnswer, prevScore, depth } = selectNextTopic(currentPhase, interviewPlan, qaHistory);
 
@@ -77,12 +88,20 @@ Output ONLY valid JSON:
 
   let result;
   try {
-    result = await llm.infer('Ask the next interview question.', systemPrompt, 'careerlm-base', { temp: 0.7, maxTokens: 200 });
+    result = await inferFn('Ask the next interview question.', systemPrompt, { temp: 0.7, maxTokens: 200 });
     const raw   = result.text || '';
-    const match = raw.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim().match(/\{[\s\S]*\}/);
+    // Strip reasoning-model <think> blocks -- see gapAnalyser.js for why.
+    const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    const match = noThink.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim().match(/\{[\s\S]*\}/);
     if (match) {
       const parsed = JSON.parse(match[0]);
-      return { question: parsed.question, topic: parsed.topic || topic, followUpDepth: depth };
+      // parsed.question can legitimately come back empty/missing even when
+      // the JSON itself is valid (confirmed live) -- topic already falls
+      // back to the locally-computed value; question needs the same,
+      // otherwise a blank question silently reaches the user mid-interview.
+      if (parsed.question) {
+        return { question: parsed.question, topic: parsed.topic || topic, followUpDepth: depth };
+      }
     }
   } catch (err) {
     console.error('[QUESTION-ENGINE] generateNextQuestion error:', err.message);
@@ -96,7 +115,7 @@ Output ONLY valid JSON:
 }
 
 /* ── SCORE AN ANSWER ───────────────────────────────────────── */
-async function scoreAnswer(question, answer, competency, cvText) {
+async function scoreAnswer(question, answer, competency, cvText, inferFn = defaultInferNano) {
   if (!answer || answer.trim().length < 5) {
     return { score: 10, feedback: 'Answer was too short or empty — please elaborate.' };
   }
@@ -124,9 +143,11 @@ Output ONLY valid JSON:
 
   let result;
   try {
-    result = await llm.infer('Score this answer now.', systemPrompt, 'careerlm-nano', { temp: 0.3, maxTokens: 150 });
+    result = await inferFn('Score this answer now.', systemPrompt, { temp: 0.3, maxTokens: 150 });
     const raw   = result.text || '';
-    const match = raw.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim().match(/\{[\s\S]*\}/);
+    // Strip reasoning-model <think> blocks -- see gapAnalyser.js for why.
+    const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    const match = noThink.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim().match(/\{[\s\S]*\}/);
     if (match) {
       const parsed = JSON.parse(match[0]);
       return {

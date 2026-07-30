@@ -6,11 +6,19 @@
 ═══════════════════════════════════════════════════════════════════ */
 const llm = require('../../engine/llm');
 
+// Default inference call — preserved exactly as before for any standalone
+// reuse of this file. cs_fixed/routes/interviewEngine.js overrides this
+// with an adapter onto middleware/brain.js's infer() — see gapAnalyser.js
+// for why this file must not require cs_fixed directly.
+async function defaultInfer(prompt, system, opts) {
+  return llm.infer(prompt, system, 'careerlm-base', opts);
+}
+
 function avg(arr) {
   return arr.length ? Math.round(arr.reduce((s, qa) => s + (qa.score || 0), 0) / arr.length) : 0;
 }
 
-async function generateFinalReport(session) {
+async function generateFinalReport(session, inferFn = defaultInfer) {
   const { qaHistory, interviewPlan, role, company } = session;
 
   const technical   = qaHistory.filter(qa => qa.competency === 'technical');
@@ -57,9 +65,11 @@ Output ONLY valid JSON:
 
   let parsed;
   try {
-    const result = await llm.infer('Generate the final interview report.', systemPrompt, 'careerlm-base', { temp: 0.5, maxTokens: 600 });
+    const result = await inferFn('Generate the final interview report.', systemPrompt, { temp: 0.5, maxTokens: 600 });
     const raw    = result.text || '';
-    const match  = raw.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim().match(/\{[\s\S]*\}/);
+    // Strip reasoning-model <think> blocks -- see gapAnalyser.js for why.
+    const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    const match  = noThink.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim().match(/\{[\s\S]*\}/);
     if (match) parsed = JSON.parse(match[0]);
   } catch (err) {
     console.error('[REPORT-GENERATOR] error:', err.message);

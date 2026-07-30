@@ -6,6 +6,16 @@
 ═══════════════════════════════════════════════════════════════════ */
 const llm = require('../../engine/llm');
 
+// Default inference call — preserved exactly as before for any standalone
+// reuse of this file. cs_fixed/routes/interviewEngine.js overrides this
+// with an adapter onto middleware/brain.js's infer() (internal CS-models
+// -> CAMP -> Groq -> OpenRouter -> OpenAI -> Anthropic), since this file
+// lives in the careercamp-ai submodule (also deployed as its own separate
+// Render service) and must not hardcode a path back up into cs_fixed.
+async function defaultInfer(prompt, system, opts) {
+  return llm.infer(prompt, system, 'careerlm-base', opts);
+}
+
 const SYSTEM_PROMPT = `You are CareerLM's interview planning engine.
 Your job: analyse a CV against a job description and produce a grounded, targeted interview plan.
 
@@ -25,7 +35,7 @@ Output ONLY valid JSON — no markdown fences, no commentary:
   "cvStrengths":       ["specific genuine strength from the CV that matches a JD requirement"]
 }`;
 
-async function buildInterviewPlan(cvText, jdText, role) {
+async function buildInterviewPlan(cvText, jdText, role, inferFn = defaultInfer) {
   const prompt = `Build a targeted interview plan for the role of "${role}".
 
 CV TEXT:
@@ -36,9 +46,16 @@ ${jdText.slice(0, 2000)}`;
 
   let result;
   try {
-    result = await llm.infer(prompt, SYSTEM_PROMPT, 'careerlm-base', { temp: 0.4, maxTokens: 800 });
-    const raw     = result.text || '';
-    const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim();
+    result = await inferFn(prompt, SYSTEM_PROMPT, { temp: 0.4, maxTokens: 800 });
+    const raw = result.text || '';
+    // Strip reasoning-model <think> blocks before fence/JSON extraction --
+    // brain.js's Groq pool includes reasoning models (groq/compound,
+    // compound-mini) that emit these; left in, a <think> block containing
+    // any '{' would make the greedy JSON regex below span from inside the
+    // reasoning trace instead of the real answer, producing a parse failure
+    // that looks like "the AI didn't return JSON" rather than what it is.
+    const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    const cleaned = noThink.replace(/^```(?:json)?\n?/i, '').replace(/```\s*$/g, '').trim();
     const match   = cleaned.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
     // Confirmed live: when every inference engine is unavailable, infer()
