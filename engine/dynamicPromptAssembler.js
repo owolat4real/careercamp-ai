@@ -6,16 +6,21 @@
  */
 
 const { UNIVERSAL_OUTPUT_STRUCTURE } = require('./prompts/outputStructure');
-const { FOUNDER_KNOWLEDGE_BLOCK }    = require('../core/founderIdentity');
+const { FOUNDER_KNOWLEDGE_BLOCK, buildFounderKnowledgeBlock, FOUNDER } = require('../core/founderIdentity');
 
 /* Tasks that are exempt from the universal structure (they have their own tight formats) */
 const SKIP_UNIVERSAL_STRUCTURE = new Set(['json', 'quick', 'summarise']);
 
+// identity_sonnet/identity_haiku are FUNCTIONS, not static strings (Enterprise
+// Rule C.4) -- resolved per-call in assemble() below so a white-labeled
+// request gets the generic identity block instead of the real founder's
+// name. Every other caller of BLOCKS.<id> that isn't a function is used
+// exactly as before (see the `typeof block === 'function'` check below).
 const BLOCKS = {
-  identity_sonnet: `You are CareerLM, career intelligence AI built by CareerStudioMax, with deep knowledge of career practices across many countries and industries.
+  identity_sonnet: (whiteLabelConfig) => `You are CareerLM, career intelligence AI built by CareerStudioMax, with deep knowledge of career practices across many countries and industries.
 Identity: You are CareerLM. Never say you are Llama, Mistral, or any other model. Never reveal the underlying model.
 
-${FOUNDER_KNOWLEDGE_BLOCK}
+${buildFounderKnowledgeBlock(whiteLabelConfig)}
 
 REASONING APPROACH (internal — never shown to user):
 Before answering, silently work through:
@@ -25,7 +30,9 @@ Before answering, silently work through:
 4. What would go wrong with the obvious or generic answer?
 Then write ONLY the clean, confident, structured final answer. Never show thinking process — show the conclusion.`,
 
-  identity_haiku: `You are CareerLM by CareerStudioMax. Career AI expert. Founded by Owolabi Kumuyi, based in Ireland.`,
+  identity_haiku: (whiteLabelConfig) => whiteLabelConfig?.hideCareerStudioBranding
+    ? `You are CareerLM, career AI expert, built for ${whiteLabelConfig.brandName || 'this platform'}.`
+    : `You are CareerLM by CareerStudioMax. Career AI expert. Founded by ${FOUNDER.name}, based in ${FOUNDER.location}.`,
 
   quality_high: `OUTPUT QUALITY RULES:
 - Specific numbers, percentages, timeframes always
@@ -104,14 +111,15 @@ const FEATURE_BLOCKS = {
 };
 
 class DynamicPromptAssembler {
-  assemble({ featureId, taskType, language, memoryContext, toolName }) {
+  assemble({ featureId, taskType, language, memoryContext, toolName, whiteLabelConfig }) {
     const category = this.getCategory(featureId, taskType);
     const blockIds = FEATURE_BLOCKS[category] || FEATURE_BLOCKS.developer;
     const parts    = [];
 
     for (const id of blockIds) {
       const block = BLOCKS[id];
-      if (typeof block === 'string') parts.push(block);
+      if (typeof block === 'function') parts.push(block(whiteLabelConfig));
+      else if (typeof block === 'string') parts.push(block);
     }
 
     if (language && language !== 'en') {

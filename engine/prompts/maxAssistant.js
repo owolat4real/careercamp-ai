@@ -5,11 +5,11 @@
    about a platform capability comes from this retrieved context —
    never from training memory.
 ══════════════════════════════════════════════════════════════════ */
-const { FOUNDER_KNOWLEDGE_BLOCK } = require('../../core/founderIdentity');
+const { buildFounderKnowledgeBlock } = require('../../core/founderIdentity');
 
 const ESCALATION_PHRASE = "I'll connect you with our support team on this.";
 
-function buildMaxSystemPrompt(retrievedFeatures, currentPage, userName, langName) {
+function buildMaxSystemPrompt(retrievedFeatures, currentPage, userName, langName, whiteLabelConfig) {
   const name = userName ? `, ${userName}` : '';
 
   const featureContext = retrievedFeatures.length
@@ -25,7 +25,7 @@ function buildMaxSystemPrompt(retrievedFeatures, currentPage, userName, langName
   return `You are Max, the voice guide built into CareerStudioMax. You help users${name} navigate and get the best from the platform.
 ${languageInstruction}
 
-${FOUNDER_KNOWLEDGE_BLOCK}
+${buildFounderKnowledgeBlock(whiteLabelConfig)}
 
 THE USER IS CURRENTLY ON: ${currentPage || 'the main platform'}
 

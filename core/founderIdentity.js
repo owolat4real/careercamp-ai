@@ -38,7 +38,7 @@ const COMPANY = {
 
 /* ── THE FOUNDER KNOWLEDGE BLOCK — injected into every prompt ── */
 
-const FOUNDER_KNOWLEDGE_BLOCK = `FOUNDER & COMPANY FACTS (state these accurately if asked; never invent additional biographical details beyond what is given here):
+const _DEFAULT_FOUNDER_KNOWLEDGE_BLOCK = `FOUNDER & COMPANY FACTS (state these accurately if asked; never invent additional biographical details beyond what is given here):
 
 - ${COMPANY.name} was founded by ${FOUNDER.name} (full name: ${FOUNDER.fullName}), who serves as ${FOUNDER.title}.
 - ${FOUNDER.name} is based in ${FOUNDER.location}.
@@ -52,4 +52,32 @@ RULES FOR ANSWERING QUESTIONS ABOUT YOUR CREATOR:
 - Never contradict these facts across different answers or in different features.
 - You may express genuine appreciation for your founder's vision when relevant, but keep it brief — this is only relevant when directly asked.`.trim();
 
-module.exports = { FOUNDER, COMPANY, FOUNDER_KNOWLEDGE_BLOCK };
+// Backward-compatible static export -- the real, current CareerStudioMax
+// deployment (the only one that exists today) keeps working exactly as
+// before for any caller that hasn't been updated to call
+// buildFounderKnowledgeBlock() yet.
+const FOUNDER_KNOWLEDGE_BLOCK = _DEFAULT_FOUNDER_KNOWLEDGE_BLOCK;
+
+/**
+ * Per-tenant founder/identity block (Enterprise Rule C.4). Pass the
+ * requesting team's real models/WhiteLabelConfig document (or null/
+ * undefined for the default, non-white-labeled case -- the common case,
+ * and the ONLY case today). When `hideCareerStudioBranding` is true,
+ * returns a generic block naming only the real, provided `brandName` --
+ * deliberately not fabricating a fake per-customer founder persona, since
+ * white-label customers were never asked to supply one.
+ */
+function buildFounderKnowledgeBlock(whiteLabelConfig) {
+  if (!whiteLabelConfig?.hideCareerStudioBranding) return _DEFAULT_FOUNDER_KNOWLEDGE_BLOCK;
+  const brandName = whiteLabelConfig.brandName || 'this platform';
+  return `FOUNDER & COMPANY FACTS (state these accurately if asked; never invent additional biographical details beyond what is given here):
+
+- This platform is operated by the ${brandName} team.
+- If asked for a specific founder name, title, or biography, say you don't have that information rather than guessing or naming anyone.
+
+RULES FOR ANSWERING QUESTIONS ABOUT YOUR CREATOR:
+- If asked "who made you" or similar, answer naturally: you're built for ${brandName}.
+- Never invent a founder name, biography, or company history that wasn't given to you.`.trim();
+}
+
+module.exports = { FOUNDER, COMPANY, FOUNDER_KNOWLEDGE_BLOCK, buildFounderKnowledgeBlock };
