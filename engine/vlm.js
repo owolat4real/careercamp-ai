@@ -110,9 +110,51 @@ If there are tables, represent them clearly.
 Label each section clearly.`,
 };
 
+// ── VRAM eviction before a vision call ─────────────────────
+// Mirrors api_server.py's _make_room_for_vision() for the Python LLaVA-1.6
+// fallback — that path already evicts Ollama's chat models before loading
+// its own heavy vision model, but this NATIVE Ollama vision path had no
+// equivalent. Confirmed live on an 8GB card: a real image+prompt request to
+// avatarvid-2b hung indefinitely (not a clean error) because its ~900MB
+// vision projector had nowhere to fit alongside cs-haiku/sonnet/opus already
+// resident — plain requests with no `images` field worked fine and fast
+// (sub-second), so the hang is specifically the projector's VRAM, not the
+// model or the request format. Evicting via keep_alive:0 is safe: Ollama
+// reloads an evicted model lazily and automatically on its next real chat
+// request, no explicit reload code needed (same reasoning already used on
+// the Python side).
+const VISION_MIN_FREE_MIB = 2500; // avatarvid-2b (~1.7GB) + its projector + inference headroom
+const MODELS_TO_EVICT_FOR_VISION = ['cs-opus', 'cs-sonnet', 'cs-haiku'];
+
+function _freeMiB() {
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    exec('nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits', (err, stdout) => {
+      if (err) return resolve(null); // no GPU visibility — skip eviction, let the call proceed as before
+      const n = parseInt(String(stdout).trim(), 10);
+      resolve(Number.isFinite(n) ? n : null);
+    });
+  });
+}
+
+async function _makeRoomForVision() {
+  const free = await _freeMiB();
+  if (free === null || free >= VISION_MIN_FREE_MIB) return;
+  await Promise.all(MODELS_TO_EVICT_FOR_VISION.map(model =>
+    axios.post(`${OLLAMA_URL}/api/generate`, { model, prompt: '', keep_alive: 0 }, { timeout: 10000 })
+      .catch(() => {}) // a model that isn't currently loaded 404s here — fine, nothing to evict
+  ));
+  for (let i = 0; i < 20; i++) {
+    const nowFree = await _freeMiB();
+    if (nowFree === null || nowFree >= VISION_MIN_FREE_MIB) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
+
 // ── Ollama vision inference ────────────────────────────────
 async function ollamaVisionInfer(imageBase64, prompt) {
   if (!ollamaVisionModel) throw new Error('No Ollama vision model detected');
+  await _makeRoomForVision();
   const r = await axios.post(`${OLLAMA_URL}/api/generate`, {
     model:  ollamaVisionModel,
     prompt: prompt,
@@ -166,14 +208,18 @@ async function analyzeImage(imageInput, task = 'resume', options = {}) {
   if (ollamaVision) {
     try {
       const text = await ollamaVisionInfer(base64, prompt);
-      if (text && text.length > 50) return { text, engine: 'ollama:llava', task };
+      // 50 was too strict for genuinely short-but-valid answers (e.g. a
+      // near-blank image or a terse factual response) -- confirmed live: a
+      // real avatarvid-2b response under 50 chars was rejected here and
+      // cascaded needlessly through the heavier mlserver/HF fallbacks.
+      if (text && text.length > 20) return { text, engine: 'ollama:llava', task };
     } catch (e) { console.warn('[CareerVision:ollama]', e.message?.slice(0,60)); }
   }
 
   // 2. Python ML server
   try {
     const text = await mlServerVisionInfer(base64, prompt, options.mimeType);
-    if (text && text.length > 50) return { text, engine: 'mlserver:llava-1.6', task };
+    if (text && text.length > 20) return { text, engine: 'mlserver:llava-1.6', task };
   } catch (e) { console.warn('[CareerVision:mlserver]', e.message?.slice(0,60)); }
 
   // 3. HuggingFace fallback
