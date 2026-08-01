@@ -1,7 +1,8 @@
 'use strict';
 /**
  * MODEL WARMER — Pings each local model at boot so Ollama loads them into VRAM.
- * Models pinged in priority order: cs-sonnet first (primary), then cs-haiku, then careerlm-nano.
+ * Models pinged in priority order: cs-sonnet first (primary), then cs-haiku,
+ * then careerlm-nano (an alias for cs-haiku, not a distinct model — see below).
  * Non-blocking — server starts even if models are cold; they warm lazily on first real call.
  */
 const axios = require('axios');
@@ -11,7 +12,16 @@ const OLLAMA = process.env.CS_INFERENCE_URL || 'http://localhost:11434';
 const WARM_MODELS = [
   { name: 'cs-sonnet',     alias: 'cs-sonnet-fast',   priority: 1 },
   { name: 'cs-haiku',      alias: 'cs-haiku-fast',    priority: 2 },
-  { name: 'careerlm-nano', alias: 'careerlm-nano',    priority: 3 },
+  // careerlm-nano is an alias for cs-haiku (see engine/llm.js's OLLAMA_MAP),
+  // never a distinct model actually registered in Ollama under that literal
+  // name. This entry previously used `alias: 'careerlm-nano'` -- checking
+  // Ollama for that exact string, which can never match -- so it logged a
+  // permanent false "not found in Ollama registry" warning even though the
+  // underlying model (cs-haiku) was warm and working the entire time.
+  // Pointing the alias at the real registered name fixes both warmAll()'s
+  // startup probe and quickPing('careerlm-nano') (used by
+  // POST /v1/developer/ping/:model, which accepts this as a valid model id).
+  { name: 'careerlm-nano', alias: 'cs-haiku',         priority: 3 },
 ];
 
 const _warm = {};
