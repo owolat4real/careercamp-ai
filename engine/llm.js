@@ -299,6 +299,15 @@ function _stripMarkdown(text) {
 // Resolve a working Ollama tag for a requested model id, falling back
 // through LOCAL_FALLBACK_CHAIN to whatever is actually pulled locally.
 function resolveOllamaTag(modelId) {
+  // Callers that already know the real Ollama tag (e.g. csModelGateway.js on
+  // the Render side probes/calls "cs-haiku"/"cs-sonnet"/"cs-opus" directly,
+  // not through this file's careerlm-* alias table) get that exact tier
+  // honored instead of being silently re-routed to whichever tier happens
+  // to be resident — otherwise a request for cs-opus could be served by
+  // cs-sonnet with no indication anything was substituted.
+  const directTag = modelId.includes(':') ? modelId : `${modelId}:latest`;
+  if (ollamaModels.includes(directTag)) return directTag;
+
   const preferred = OLLAMA_MAP[modelId] || 'mistral:7b';
   const candidates = [preferred, ...LOCAL_FALLBACK_CHAIN];
   for (const tag of candidates) {
@@ -460,6 +469,15 @@ async function infer(prompt, system, modelId, opts = {}) {
     return result;
   };
 
+  // The 20-char floor below exists to reject near-empty/garbled replies from
+  // a real user request. But a deliberately tiny probe (e.g. csModelGateway.js
+  // on the Render side pings with max_tokens:1 just to confirm a model is
+  // warm/reachable) can never produce 20 chars — that's not a broken engine,
+  // it's a request that only asked for one token. Scale the floor down for
+  // small max_tokens budgets so those probes aren't misread as failures and
+  // don't cascade through every other engine unnecessarily.
+  const _minLen = (opts.maxTokens && opts.maxTokens <= 5) ? 1 : 20;
+
   if (ollamaAvailable) {
     const tried = new Set();
     const preferredTag = resolveOllamaTag(modelId);
@@ -469,7 +487,7 @@ async function infer(prompt, system, modelId, opts = {}) {
       tried.add(tag);
       try {
         const text = await ollamaInfer(prompt, system, tag, opts);
-        if (text && text.length > 20) return _withSchema({ text, model: tag, engine: 'ollama', task });
+        if (text && text.length >= _minLen) return _withSchema({ text, model: tag, engine: 'ollama', task });
       } catch (e) { console.warn(`[CareerLM:ollama:${tag}]`, e.message?.slice(0,60)); }
     }
   }
@@ -478,7 +496,7 @@ async function infer(prompt, system, modelId, opts = {}) {
   if (mlServerAvailable) {
     try {
       const text = await mlServerInfer(prompt, system, modelId, opts);
-      if (text && text.length > 20) return _withSchema({ text, model: modelId, engine: 'mlserver', task });
+      if (text && text.length >= _minLen) return _withSchema({ text, model: modelId, engine: 'mlserver', task });
     } catch (e) { console.warn('[CareerLM:mlserver]', e.message?.slice(0,60)); }
   }
 
@@ -490,7 +508,7 @@ async function infer(prompt, system, modelId, opts = {}) {
         messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
       });
       const text = res.choices?.[0]?.message?.content || '';
-      if (text && text.length > 20) return _withSchema({ text, model: groqId, engine: 'groq', task });
+      if (text && text.length >= _minLen) return _withSchema({ text, model: groqId, engine: 'groq', task });
     } catch (e) { console.warn('[CareerLM:groq]', e.message?.slice(0,60)); }
   }
 
@@ -498,7 +516,7 @@ async function infer(prompt, system, modelId, opts = {}) {
   if (ALLOW_EXTERNAL_AI) {
     try {
       const text = await orInfer(prompt, system, orId, opts);
-      if (text && text.length > 20) return _withSchema({ text, model: orId, engine: 'openrouter', task });
+      if (text && text.length >= _minLen) return _withSchema({ text, model: orId, engine: 'openrouter', task });
     } catch (e) { console.warn('[CareerLM:openrouter]', e.message?.slice(0,60)); }
   }
 
@@ -506,7 +524,7 @@ async function infer(prompt, system, modelId, opts = {}) {
   if (ALLOW_EXTERNAL_AI && HF_TOKEN) {
     try {
       const text = await hfInfer(prompt, system, hfId, opts);
-      if (text && text.length > 20) return _withSchema({ text, model: hfId, engine: 'huggingface', task });
+      if (text && text.length >= _minLen) return _withSchema({ text, model: hfId, engine: 'huggingface', task });
     } catch (e) { console.warn('[CareerLM:hf]', e.message?.slice(0,60)); }
   }
 
