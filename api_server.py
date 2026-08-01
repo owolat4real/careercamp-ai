@@ -378,11 +378,26 @@ async def tts(req: TTSRequest):
         # against the .pth file), so `is_multi_speaker` never trips and every
         # named-speaker call raises "no speaker provided". Using speaker_wav
         # (XTTS's primary, well-supported voice-cloning mode — a short
-        # reference clip) sidesteps that broken code path entirely. One
-        # shared reference voice for now (see /workspace/voice-refs/) until
-        # distinct per-persona reference clips are recorded/sourced.
+        # reference clip) sidesteps that broken code path entirely.
+        #
+        # Distinct per-persona reference clips now live at
+        # /workspace/voice-refs/<voice>.wav (career-coach/interviewer/mentor/
+        # analyst) — previously this always loaded default.wav regardless of
+        # req.voice, so every persona sounded identical despite the 4 distinct
+        # engine/voice.js VOICES entries implying otherwise. Falls back to
+        # default.wav for an unrecognised voice name, then to no reference at
+        # all (XTTS's own built-in default) if neither file exists.
+        # req.voice is caller-supplied — allowlist it against the known
+        # persona names before using it in a filesystem path (never build a
+        # path from unvalidated request input directly, even for a read-only
+        # reference file: an unchecked value here could walk outside
+        # ref_dir via "../"-style traversal).
+        _KNOWN_VOICES = {"career-coach", "interviewer", "mentor", "analyst"}
         ref_dir = os.environ.get("VOICE_REF_DIR", "/workspace/voice-refs")
-        speaker_wav = os.path.join(ref_dir, "default.wav")
+        voice_name = req.voice if req.voice in _KNOWN_VOICES else "default"
+        speaker_wav = os.path.join(ref_dir, f"{voice_name}.wav")
+        if not os.path.exists(speaker_wav):
+            speaker_wav = os.path.join(ref_dir, "default.wav")
         if not os.path.exists(speaker_wav):
             speaker_wav = None
         tts_kwargs = {"text": req.text, "language": req.language, "file_path": out_path}
