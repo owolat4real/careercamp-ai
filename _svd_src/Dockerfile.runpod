@@ -8,7 +8,7 @@
 # Deliberately a SEPARATE RunPod endpoint (own RUNPOD_SVD_ENDPOINT_ID)
 # so an outage on this or either other handler never blocks the others.
 # ══════════════════════════════════════════════════════════════════
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 WORKDIR /app
 
@@ -18,11 +18,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.10 /usr/bin/python
 
-# Torch build matched to the CUDA 11.8 base image above, and to a
-# version diffusers==0.31.0 (pinned in requirements.txt) is known to
-# work with.
+# Real bug found live: this endpoint's own RunPod config requires
+# minCudaVersion 12.0 (its allowed GPU pool is RTX A5000/L4/RTX 3090 —
+# all fully CUDA 12.x-capable), but this image was built against the
+# CUDA 11.8 base + matching torch cu118 wheels below — every single job
+# ever submitted (0/16 completed) failed with "CUDA error: no kernel
+# image is available for execution on the device", since the baked-in
+# torch kernels were compiled for an older CUDA/architecture set than
+# what the assigned worker's driver actually presents. Bumped to CUDA
+# 12.1 base + matching cu121 torch build — same torch/torchvision
+# version pins, only the CUDA variant changes, so diffusers==0.31.0's
+# known-working pairing (see requirements.txt) is preserved.
 RUN pip install --no-cache-dir torch==2.1.2 torchvision==0.16.2 \
-    --index-url https://download.pytorch.org/whl/cu118
+    --index-url https://download.pytorch.org/whl/cu121
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
