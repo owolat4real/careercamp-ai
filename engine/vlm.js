@@ -28,11 +28,24 @@ const ML_SERVER  = process.env.ML_SERVER_URL || 'http://localhost:3003';
 let ollamaVision = false; // vision-capable model available in Ollama
 let ollamaVisionModel = null; // the actual pulled model name to use
 
-// Preference order when multiple vision models are pulled — avatarvid-2b's
-// own baked-in system prompt is purpose-built for avatar/interview-frame
-// analysis (gaze, pose, emotion tracking), so it's a better fit for that
-// task than the generic llava/moondream base models it's built on.
-const VISION_MODEL_PREFERENCE = ['avatarvid-2b', 'llava', 'bakllava', 'vision', 'moondream'];
+// Preference order when multiple vision models are pulled. avatarvid-2b was
+// previously listed first (its baked-in system prompt is purpose-built for
+// avatar/interview-frame analysis), but confirmed live (2026-08-06) that it
+// HANGS INDEFINITELY on any real image+prompt request — not a slow response,
+// a genuine non-terminating call. Because this Ollama instance runs with
+// OLLAMA_NUM_PARALLEL=1, one hung avatarvid-2b request permanently occupies
+// the pod's only inference slot and silently blocks EVERY other model too
+// (cs-opus/sonnet/haiku text included) until Ollama is restarted — this is
+// not a self-contained vision failure, it can take down the whole pod.
+// VRAM headroom was not the cause (7GB+ free at the time, well above
+// _makeRoomForVision()'s threshold below) so this is a genuine model/runtime
+// bug, not a resource contention issue eviction can fix. llava-phi3 (also
+// pulled) handles the identical real image correctly in ~1s once warm.
+// Demoted below the working models until the underlying hang is root-caused
+// separately — do not move it back above llava/moondream without first
+// confirming the hang is fixed, since a single bad request here is a
+// pod-wide outage, not a contained failure.
+const VISION_MODEL_PREFERENCE = ['llava', 'moondream', 'bakllava', 'avatarvid-2b'];
 
 async function checkVisionModels() {
   try {
