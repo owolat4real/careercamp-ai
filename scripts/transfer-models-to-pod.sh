@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# Copy the local custom Ollama models (cs-haiku, cs-sonnet, cs-opus,
-# cs-embed) onto a freshly-provisioned RunPod GPU pod.
+# Copy the local custom Ollama models (cs-haiku, cs-sonnet, cs-embed)
+# onto a freshly-provisioned RunPod GPU pod.
 #
-# These are custom fine-tunes, not public models — there is no
-# "ollama pull cs-sonnet". The only way to get them onto a new host is
-# to copy the already-built model files this machine already has in
+# cs-opus is DELIBERATELY EXCLUDED from this script as of the 2026-08-07
+# multilingual upgrade (see models/Modelfile.cs-opus, DEPLOY_RUNPOD.md
+# step 3a): it's now `aya-expanse:32b`, a real PUBLIC Ollama library
+# model chosen for genuine 23-language coverage, not a custom fine-tune —
+# pull it directly ON THE POD instead (`ollama pull aya-expanse:32b`),
+# which is both simpler and far faster than uploading an estimated ~19GB
+# file over this machine's upload bandwidth via scp.
+#
+# The remaining 3 (cs-haiku, cs-sonnet, cs-embed) genuinely ARE custom
+# fine-tunes with no public registry — there is no "ollama pull
+# cs-sonnet" for those. The only way to get them onto a new host is to
+# copy the already-built model files this machine already has in
 # ~/.ollama/models.
 #
 # Usage:
@@ -15,9 +24,11 @@
 #      that one is PTY-only and rejects both scripted commands and scp).
 #   2. Run this script with that pod's direct SSH host/port:
 #        ./transfer-models-to-pod.sh <pod-ip> <ssh-port> [ssh-key-path]
+#   3. Separately, on the pod itself, pull cs-opus's real base
+#      (see DEPLOY_RUNPOD.md step 3a) — this script does not do that part.
 #
 # What it does:
-#   - Stages only the 4 needed models' manifests + deduplicated blobs
+#   - Stages only the 3 needed models' manifests + deduplicated blobs
 #     into ~/cs-models-stage (much smaller than the whole ~/.ollama/models
 #     dir, which may contain other, unrelated models too)
 #   - scp's that staging dir straight into /workspace/ollama-models on
@@ -34,7 +45,7 @@ SSH_KEY="${3:-$HOME/.ssh/id_ed25519}"
 
 LOCAL_OLLAMA_DIR="$HOME/.ollama"
 STAGE_DIR="$HOME/cs-models-stage"
-MODELS=(cs-haiku cs-sonnet cs-opus cs-embed)
+MODELS=(cs-haiku cs-sonnet cs-embed)
 
 echo "==> Checking local models exist..."
 for m in "${MODELS[@]}"; do
@@ -86,4 +97,6 @@ REMOTE_SIZE=$(ssh -i "$SSH_KEY" -p "$POD_PORT" "root@$POD_HOST" \
 echo "    Staged: $LOCAL_SIZE bytes | Pod: $REMOTE_SIZE bytes"
 
 echo "==> Done. On the pod, start Ollama with OLLAMA_MODELS=/workspace/ollama-models"
-echo "    and confirm all 4 models via 'ollama list' (see DEPLOY_RUNPOD.md step 4)."
+echo "    and confirm these 3 models via 'ollama list'. cs-opus is separate —"
+echo "    run 'ollama pull aya-expanse:32b && ollama create cs-opus -f Modelfile.cs-opus'"
+echo "    directly on the pod (see DEPLOY_RUNPOD.md step 3a/4)."

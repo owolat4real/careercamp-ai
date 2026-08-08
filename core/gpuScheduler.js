@@ -2,16 +2,23 @@
 /**
  * gpuScheduler.js — GPU-aware concurrency limiter per model tier.
  *
- * An RTX 3050 Laptop GPU (4 GB VRAM) has limited bandwidth and CUDA cores
- * (2560 CUDA cores, 80 tensor cores). Concurrent streams on the same model
- * share those resources — past a hardware-validated limit, queuing requests
- * and running them sequentially is faster than letting them fight each other.
+ * Original limits below were validated on an RTX 3050 Laptop GPU (4 GB
+ * VRAM, 2560 CUDA cores) — cs-opus has since moved to a real 70B model on
+ * a 40-80GB pod (see gpuLayerCalculator.js), which changes ITS number
+ * specifically; haiku/sonnet stay on the same small models these limits
+ * were validated against, so their numbers are unchanged.
  *
- * Safe concurrency limits (validated against RTX 3050 throughput data):
- *   haiku  (1B):  3 concurrent streams  — small model, wide batch headroom
- *   sonnet (3B):  2 concurrent streams  — medium model, moderate VRAM/compute
- *   opus   (7B):  1 concurrent stream   — large model, full VRAM, no headroom
- *   nano         :  4 concurrent streams  — tiny model, negligible VRAM
+ * Concurrent streams on the same model share GPU bandwidth/compute — past
+ * a hardware-validated limit, queuing requests and running them
+ * sequentially is faster than letting them fight each other.
+ *
+ * Safe concurrency limits:
+ *   haiku  (1B):   3 concurrent streams — small model, wide batch headroom, validated on RTX 3050
+ *   sonnet (3B):   2 concurrent streams — medium model, moderate VRAM/compute, validated on RTX 3050
+ *   opus   (70B):  1 concurrent stream  — large model, no real headroom for a second stream even
+ *                  on 40-80GB (a single 70B load already uses most of the budget) — not yet
+ *                  re-validated with real pod throughput data, kept conservative at 1
+ *   nano         :  4 concurrent streams — tiny model, negligible VRAM
  *
  * Requests that arrive when the slot is full are queued (spin-wait, 100 ms
  * intervals). The maximum wait duration is capped at 60 s to prevent requests

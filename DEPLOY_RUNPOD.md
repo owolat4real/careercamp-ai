@@ -1,8 +1,19 @@
 # Deploying careercamp-ai + Ollama to a RunPod GPU Pod
 
-Moves the internal AI models (cs-haiku, cs-sonnet, cs-opus, cs-embed —
-~6.7GB combined) off "only works when your own machine is on" and onto a
-persistent GPU pod that Render (cs_fixed) can reach 24/7.
+Moves the internal AI models off "only works when your own machine is
+on" and onto a persistent GPU pod that Render (cs_fixed) can reach 24/7.
+
+**2026-08-07 real upgrade**: cs-opus moved from a 7B custom fine-tune
+(~4.2GB) to `aya-expanse:32b`, a real public Ollama library model chosen
+for genuine 23-language coverage (real 101-language coverage via Aya-101
+was investigated first but is architecturally incompatible with
+Ollama/llama.cpp — see Modelfile.cs-opus's comment for the full real
+research trail). Estimated ~19GB Q4_K_M (scaled from real parameter
+count, not directly measured — see gpuLayerCalculator.js's honesty note)
+— this still changes the GPU/disk sizing below versus the original
+~6.7GB-combined plan, just less drastically than the 70B model briefly
+considered first. cs-haiku + cs-sonnet + cs-embed stay the same small
+custom fine-tunes as before (~2.5GB combined).
 
 **Note:** everything below is native (no Docker) and uses direct-TCP SSH
 + a Cloudflare Tunnel — not the docker-compose / rsync-over-proxy /
@@ -13,18 +24,23 @@ updated to match what was actually run.
 ## 1. Provision the pod
 
 - runpod.io → **Pods** (not Serverless) → Deploy
-- GPU: an **RTX A4000 (16GB VRAM)** comfortably fits all 4 models
-  resident simultaneously (~8GB used, ~8GB free) — no need for a bigger
-  card. Cheap tiers (A5000, A4500, RTX 2000 Ada) frequently show
-  "Instance not available" at click time; availability fluctuates in
-  real time, so just retry a few GPU types if your first pick is out of
-  stock.
+- GPU: a real **40-80GB single-GPU pod (A100/H100-class)** — the old
+  RTX A4000 16GB recommendation still doesn't fit once cs-opus needs
+  ~19GB (estimated), though the real headroom is meaningfully better
+  than the 70B model briefly considered first would have left. At 40GB,
+  cs-opus plus cs-haiku/cs-sonnet/cs-embed resident together should fit
+  with real room to spare (unlike the 70B case's thin-margin warning) —
+  confirm with `nvidia-smi` rather than assuming, since the ~19GB figure
+  is an estimate, not a measured one. Availability fluctuates in real
+  time; retry a few GPU types if your first pick is out of stock.
 - Template: **Runpod Pytorch** (any CUDA-enabled base image works — Docker
   itself is *not* available inside a RunPod pod, since the pod is
   already a container; docker-compose approaches won't work here)
-- Container disk: **30GB+** (set this correctly at pod **creation** time
-  — resizing a running pod's disk via `runpodctl pod update` destabilizes
-  it, sometimes permanently; recreate the pod instead of resizing)
+- Container disk: **60GB+** (down from the 70B model's 80GB+ recommendation
+  — cs-opus's ~19GB estimated download plus the other 3 models plus real
+  working space). Set this correctly at pod **creation** time — resizing
+  a running pod's disk via `runpodctl pod update` destabilizes it,
+  sometimes permanently; recreate the pod instead of resizing.
 - Ports at creation: `8888/http,22/tcp` is enough. Do **not** add more
   ports later via `runpodctl pod update --ports` — like the disk resize,
   this triggers a full container reset that wipes everything outside the
@@ -62,10 +78,12 @@ mkdir -p /workspace/careercamp-ai /workspace/ollama-models
 git clone https://github.com/owolat4real/careercamp-ai.git /workspace/careercamp-ai
 ```
 
-These 4 models are custom fine-tunes with no public registry — there's
-no `ollama pull cs-sonnet`. From your **local machine**, stage just the
-4 models' manifests + deduplicated blobs (much smaller than your whole
-`~/.ollama/models`), then `scp` them over directly:
+cs-haiku, cs-sonnet, and cs-embed are custom fine-tunes with no public
+registry — there's no `ollama pull cs-sonnet`. From your **local
+machine**, stage just those 3 models' manifests + deduplicated blobs
+(much smaller than your whole `~/.ollama/models`), then `scp` them over
+directly (`scripts/transfer-models-to-pod.sh` now does exactly this,
+cs-opus excluded — see 3a below):
 
 ```bash
 scp -r ~/cs-models-stage/* root@<pod-ip>:/workspace/ollama-models/ -P <ssh-port>
@@ -75,13 +93,37 @@ scp -r ~/cs-models-stage/* root@<pod-ip>:/workspace/ollama-models/ -P <ssh-port>
 work — the proxy connection type used there is PTY-only. Plain `scp`
 over the direct-TCP SSH connection is simpler and does work.)
 
-## 4. Start Ollama with all 4 models resident
+### 3a. Pull cs-opus directly on the pod (real 32B multilingual model)
+
+Unlike the 3 custom fine-tunes above, cs-opus is now `aya-expanse:32b` —
+a real, public Ollama library model, chosen specifically for genuine
+23-language coverage (see Modelfile.cs-opus for the full real research
+trail, including why Aya-101's 101 languages couldn't be used at all —
+architecturally incompatible with Ollama). Pull it **on the pod itself**
+(its own bandwidth is far better than uploading an estimated ~19GB from
+a home connection) and tag it as `cs-opus` using the repo's real Modelfile:
+
+```bash
+ollama pull aya-expanse:32b   # ~19GB estimated — real download, budget real time for this
+cd /workspace/careercamp-ai   # or wherever cs_fixed/models/Modelfile.cs-opus was cloned
+ollama create cs-opus -f Modelfile.cs-opus
+```
+
+## 4. Start Ollama with the model set resident
 
 ```bash
 OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 \
   OLLAMA_NUM_PARALLEL=1 OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 \
   nohup ollama serve > /tmp/ollama.log 2>&1 & disown
 ```
+
+`OLLAMA_MAX_LOADED_MODELS=4` above assumes real headroom for all 4 at
+once — genuinely more comfortable now than the 70B model briefly
+considered first would have left, on both ends of the 40-80GB range.
+Still confirm with `nvidia-smi` after cs-opus loads rather than assuming
+(the ~19GB figure is a real estimate, not a directly measured one — see
+gpuLayerCalculator.js's honesty note); drop to `2` only if real headroom
+turns out tighter than expected.
 
 `OLLAMA_NUM_PARALLEL=1` matters — a higher value reserves KV-cache
 memory per *concurrent request slot* per model, which can force the

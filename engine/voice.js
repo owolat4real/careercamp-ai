@@ -10,7 +10,15 @@
  *   4. HuggingFace Whisper — last resort
  *
  * TTS (Text-to-Speech):
- *   1. Coqui XTTS-v2       — Python ML server, natural voice, 16 languages
+ *   1. Chatterbox (MIT)    — isolated Python service (tts_server.py, port
+ *                            3004), natural voice, 23 languages. Replaces
+ *                            Coqui XTTS-v2 (2026-08-08) — CPML license
+ *                            restricted commercial use, and Coqui Inc.
+ *                            (who could sell a commercial license) shut
+ *                            down Jan 2024. Short text synchronous, long
+ *                            text via a real async job + poll path
+ *                            (Chatterbox isn't real-time on this
+ *                            hardware — measured RTF ~1-2.2x).
  *   2. ElevenLabs API      — professional quality (if key set)
  *   3. System TTS          — fallback
  *
@@ -32,6 +40,24 @@ const path       = require('path');
 const { Groq }   = require('groq-sdk');
 
 const ML_SERVER   = process.env.ML_SERVER_URL   || 'http://localhost:3003';
+// Chatterbox TTS — separate service/port from ML_SERVER on purpose (see
+// tts_server.py's header): it needs transformers==5.2.0/torch==2.6.0,
+// incompatible with ML_SERVER's shared LLM/vision/embedding stack
+// (transformers==4.45.1/torch==2.4.1), confirmed by directly breaking
+// those imports when tried in the same venv. Replaces Coqui XTTS-v2
+// (CPML license, no longer commercially licensable — Coqui Inc. shut
+// down Jan 2024) as of 2026-08-08.
+const TTS_SERVER  = process.env.TTS_SERVER_URL  || 'http://localhost:3004';
+// Chatterbox is NOT real-time on this hardware (measured RTF ~1-2.2x,
+// vs. XTTS-v2's faster ~1-2s here) -- short text stays synchronous
+// (same UX as before), longer text goes through the real async job +
+// poll path instead of risking a client-side timeout on a single long
+// request. Threshold picked from real measurement: ~30 words / ~180
+// chars completed in ~7s warm; 300 chars gives real margin before
+// synchronous wait time gets user-visibly long.
+const TTS_SYNC_MAX_CHARS = 300;
+const TTS_JOB_POLL_MS    = 1500;
+const TTS_JOB_MAX_WAIT_MS = 120000; // generous ceiling for the longest real requests (routes/media.js caps input at 3000 chars)
 const GROQ_KEY    = process.env.GROQ_API_KEY    || '';
 const EL_KEY      = process.env.ELEVENLABS_API_KEY || '';
 const WHISPER_BIN = process.env.WHISPER_BIN     || path.join(__dirname, '../models/whisper/main');
@@ -185,15 +211,71 @@ async function transcribe(audioInput, options = {}) {
 // TEXT-TO-SPEECH
 // ═══════════════════════════════════════════════════════════
 
-// ── Coqui XTTS via Python ML server ───────────────────────
-async function coquiTTS(text, voiceId, language = 'en') {
-  const r = await axios.post(`${ML_SERVER}/v1/tts`, {
-    text,
-    voice:    voiceId,
-    language: language,
-    model:    'xtts-v2',
+// ── Chatterbox TTS via its own isolated Python service ────
+// Real bimodal dispatch: short text goes through the synchronous
+// endpoint (identical latency profile to what callers already expect);
+// longer text goes through the real async job + poll path so a single
+// slow generation can't blow past a caller's timeout. Both paths return
+// the exact same Buffer shape, so callers don't need to know which one
+// ran.
+async function chatterboxSyncTTS(text, voiceId, language = 'en') {
+  const r = await axios.post(`${TTS_SERVER}/v1/tts`, {
+    text, voice: voiceId, language,
   }, { responseType: 'arraybuffer', timeout: 60000 });
   return Buffer.from(r.data);
+}
+
+async function chatterboxJobTTS(text, voiceId, language = 'en') {
+  const { data: job } = await axios.post(`${TTS_SERVER}/v1/tts/job`, {
+    text, voice: voiceId, language,
+  }, { timeout: 10000 });
+
+  const deadline = Date.now() + TTS_JOB_MAX_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise(res => setTimeout(res, TTS_JOB_POLL_MS));
+    const { data: status } = await axios.get(`${TTS_SERVER}/v1/tts/job/${job.job_id}`, { timeout: 10000 });
+    if (status.status === 'done') return Buffer.from(status.audio_base64, 'base64');
+    if (status.status === 'failed') throw new Error(status.error || 'TTS job failed');
+  }
+  throw new Error(`TTS job ${job.job_id} did not complete within ${TTS_JOB_MAX_WAIT_MS}ms`);
+}
+
+async function chatterboxTTS(text, voiceId, language = 'en') {
+  return text.length <= TTS_SYNC_MAX_CHARS
+    ? chatterboxSyncTTS(text, voiceId, language)
+    : chatterboxJobTTS(text, voiceId, language);
+}
+
+// Real progressive-delivery path (tts_server.py's /v1/tts/stream) --
+// exposed here for a future frontend that wants to start playback before
+// the full response finishes generating. Not wired into synthesize()
+// below since routes/media.js's current contract returns one complete
+// buffer; a caller that wants streaming uses this directly.
+async function chatterboxStreamTTS(text, voiceId, language, onChunk) {
+  const r = await axios.post(`${TTS_SERVER}/v1/tts/stream`, {
+    text, voice: voiceId, language,
+  }, { responseType: 'stream', timeout: 120000 });
+
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    r.data.on('data', (piece) => {
+      buf += piece.toString('utf8');
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const rawEvent = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const line = rawEvent.replace(/^data:\s*/, '');
+        if (!line) continue;
+        try {
+          const evt = JSON.parse(line);
+          if (evt.done) return resolve();
+          if (evt.error) { onChunk?.({ error: evt.error, chunk: evt.chunk, total: evt.total }); continue; }
+          onChunk?.({ audio: Buffer.from(evt.audio_base64, 'base64'), chunk: evt.chunk, total: evt.total });
+        } catch (_) { /* partial/malformed event, skip */ }
+      }
+    });
+    r.data.on('end', resolve);
+    r.data.on('error', reject);
+  });
 }
 
 // ── ElevenLabs TTS ────────────────────────────────────────
@@ -220,12 +302,13 @@ async function synthesize(text, options = {}) {
   const { voice = 'career-coach', language = 'en', engine } = options;
   const voiceCfg = VOICES[voice] || VOICES['career-coach'];
 
-  // 1. Coqui XTTS (local, most natural)
-  if (!engine || engine === 'coqui') {
+  // 1. Chatterbox (local, most natural) — replaces Coqui XTTS-v2, see
+  // tts_server.py's header for why (real license exposure, now closed)
+  if (!engine || engine === 'chatterbox' || engine === 'coqui') {
     try {
-      const audio = await coquiTTS(text, voiceCfg.coquiSpeaker, language);
-      return { audio, format: 'wav', engine: 'coqui-xtts', voice };
-    } catch (e) { console.warn('[CareerVoice:coqui]', e.message?.slice(0,60)); }
+      const audio = await chatterboxTTS(text, voiceCfg.coquiSpeaker, language);
+      return { audio, format: 'wav', engine: 'chatterbox', voice };
+    } catch (e) { console.warn('[CareerVoice:chatterbox]', e.message?.slice(0,60)); }
   }
 
   // 2. ElevenLabs (professional quality)
@@ -282,10 +365,11 @@ module.exports = {
   },
   status: () => ({
     stt: { local: fs.existsSync(WHISPER_BIN), groq: !!groq },
-    tts: { coqui: true, elevenlabs: !!EL_KEY },
+    tts: { chatterbox: true, elevenlabs: !!EL_KEY },
   }),
   transcribe,
   synthesize,
+  synthesizeStream: chatterboxStreamTTS,
   analyzeInterviewAnswer,
   VOICES,
   SUPPORTED_LANGUAGES,

@@ -116,14 +116,6 @@ def load_whisper(model_size: str = "base"):
     logger.info(f"[CareerVoice] Whisper {model_size} loaded")
     return model
 
-def load_tts():
-    """Coqui XTTS-v2"""
-    if "tts" in _models: return _models["tts"]
-    from TTS.api import TTS
-    model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(DEVICE)
-    _models["tts"] = model
-    return model
-
 def load_vision():
     """LLaVA vision model"""
     if "vision" in _models: return _models["vision"]
@@ -167,61 +159,6 @@ def load_vision():
     logger.info("[CareerVision] LLaVA-1.6 loaded (4-bit)" if DEVICE == "cuda" else "[CareerVision] LLaVA-1.6 loaded (cpu fp32)")
     return _models["vision"]
 
-# ── CareerBERT custom fine-tuning architecture ─────────────
-class CareerBERTTrainer:
-    """
-    Fine-tunes BERT for career domain tasks using a multi-task learning approach.
-
-    Architecture: BERT-base → [CLS] token → task-specific heads
-      Head 1: Resume/JD Match    — binary classification + cosine sim
-      Head 2: Career Stage       — 5-class classification
-      Head 3: Skill NER          — token classification (B-SKILL, I-SKILL, O)
-      Head 4: Interview Score    — regression (0-100)
-
-    Training data (assemble from public sources):
-      - Resume corpus: 50K resumes (various formats)
-      - JD corpus: 100K job descriptions
-      - Interview Q&A: 10K scored answers
-      - Career stage labels: 20K professionally labelled CVs
-    """
-
-    def __init__(self, model_name="bert-base-uncased", output_dir="./models/careerbert"):
-        self.model_name = model_name
-        self.output_dir = output_dir
-
-    def prepare_data(self, data_dir: str):
-        """Load and tokenize training data"""
-        from transformers import BertTokenizer
-        import datasets
-        self.tokenizer = BertTokenizer.from_pretrained(self.model_name)
-        # Load CSV/JSON training files
-        logger.info(f"[CareerBERT Train] Loading data from {data_dir}")
-
-    def train(self, epochs: int = 5, lr: float = 2e-5, batch_size: int = 32):
-        """Fine-tune BERT for career domain — multi-task learning"""
-        import torch.nn as nn
-        from transformers import BertForSequenceClassification, Trainer, TrainingArguments
-
-        training_args = TrainingArguments(
-            output_dir            = self.output_dir,
-            num_train_epochs      = epochs,
-            per_device_train_batch_size = batch_size,
-            per_device_eval_batch_size  = batch_size,
-            learning_rate         = lr,
-            weight_decay          = 0.01,
-            warmup_ratio          = 0.1,
-            fp16                  = DEVICE == "cuda",
-            dataloader_num_workers = 4,
-            save_strategy         = "epoch",
-            evaluation_strategy   = "epoch",
-            load_best_model_at_end = True,
-            metric_for_best_model = "f1",
-            logging_steps         = 100,
-            report_to             = "none",
-        )
-        logger.info(f"[CareerBERT Train] Training on {DEVICE} for {epochs} epochs")
-        return training_args
-
 # ── FastAPI app ────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -253,12 +190,6 @@ class STTRequest(BaseModel):
     audio_base64: str
     language:     Optional[str] = "en"
     model:        Optional[str] = "base"
-
-class TTSRequest(BaseModel):
-    text:     str
-    voice:    Optional[str] = "career-coach"
-    language: Optional[str] = "en"
-    model:    Optional[str] = "xtts-v2"
 
 # ── Health ─────────────────────────────────────────────────
 @app.get("/health")
@@ -361,55 +292,12 @@ async def stt(file: UploadFile = File(None), audio_base64: str = Form(None), lan
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-# ── TTS (Coqui XTTS-v2) ───────────────────────────────────
-@app.post("/v1/tts")
-async def tts(req: TTSRequest):
-    try:
-        tts_model = load_tts()
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            out_path = tmp.name
-        # XTTS-v2 is multi-speaker and raises if neither speaker nor speaker_wav
-        # is given. The named-speaker path (tts_model.speakers / `speaker=...`)
-        # depends on TTS==0.22.0 correctly populating speaker_manager from the
-        # downloaded speakers_xtts.pth checkpoint — in practice that property
-        # comes back empty/None on this install even though the checkpoint
-        # genuinely contains all 58 real speaker embeddings (verified directly
-        # against the .pth file), so `is_multi_speaker` never trips and every
-        # named-speaker call raises "no speaker provided". Using speaker_wav
-        # (XTTS's primary, well-supported voice-cloning mode — a short
-        # reference clip) sidesteps that broken code path entirely.
-        #
-        # Distinct per-persona reference clips now live at
-        # /workspace/voice-refs/<voice>.wav (career-coach/interviewer/mentor/
-        # analyst) — previously this always loaded default.wav regardless of
-        # req.voice, so every persona sounded identical despite the 4 distinct
-        # engine/voice.js VOICES entries implying otherwise. Falls back to
-        # default.wav for an unrecognised voice name, then to no reference at
-        # all (XTTS's own built-in default) if neither file exists.
-        # req.voice is caller-supplied — allowlist it against the known
-        # persona names before using it in a filesystem path (never build a
-        # path from unvalidated request input directly, even for a read-only
-        # reference file: an unchecked value here could walk outside
-        # ref_dir via "../"-style traversal).
-        _KNOWN_VOICES = {"career-coach", "interviewer", "mentor", "analyst"}
-        ref_dir = os.environ.get("VOICE_REF_DIR", "/workspace/voice-refs")
-        voice_name = req.voice if req.voice in _KNOWN_VOICES else "default"
-        speaker_wav = os.path.join(ref_dir, f"{voice_name}.wav")
-        if not os.path.exists(speaker_wav):
-            speaker_wav = os.path.join(ref_dir, "default.wav")
-        if not os.path.exists(speaker_wav):
-            speaker_wav = None
-        tts_kwargs = {"text": req.text, "language": req.language, "file_path": out_path}
-        if speaker_wav:
-            tts_kwargs["speaker_wav"] = speaker_wav
-        tts_model.tts_to_file(**tts_kwargs)
-        with open(out_path, "rb") as f:
-            audio_data = f.read()
-        os.unlink(out_path)
-        return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=str(e))
+# TTS moved to tts_server.py (Chatterbox, own venv/port 3004) 2026-08-08 —
+# replaces Coqui XTTS-v2, which is gone from this file. See that file's
+# header for why it's a separate service rather than a route here
+# (real, confirmed dependency conflict between chatterbox-tts's required
+# transformers==5.2.0/torch==2.6.0 and this server's transformers==
+# 4.45.1/torch==2.4.1 LLM/vision/embedding stack).
 
 # ── Vision (LLaVA-1.6) ────────────────────────────────────
 @app.post("/v1/vision")
@@ -441,15 +329,6 @@ async def vision(
         return {"text": generated, "model": "llava-1.6", "engine": f"llava-{DEVICE}"}
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
-
-# ── CareerBERT training endpoint (async, long-running) ─────
-@app.post("/v1/bert/train")
-async def train_bert(request: dict):
-    """Trigger BERT fine-tuning — returns job ID for status polling"""
-    import uuid
-    job_id = str(uuid.uuid4())[:8]
-    logger.info(f"[CareerBERT Train] Job {job_id} queued")
-    return {"job_id": job_id, "status": "queued", "message": "Training job queued — monitor via /v1/bert/train/{job_id}"}
 
 if __name__ == "__main__":
     port = int(os.getenv("ML_SERVER_PORT", 3003))

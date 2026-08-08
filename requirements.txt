@@ -30,8 +30,9 @@ timm==1.0.9
 faster-whisper==1.0.3
 openai-whisper==20231117
 
-# TTS
-TTS==0.22.0
+# TTS moved to tts_server.py's own venv-tts/requirements-tts.txt
+# (chatterbox-tts) — real, confirmed dependency conflict with this
+# venv's transformers/torch pins, see tts_server.py header.
 
 # Search / web
 requests==2.32.3

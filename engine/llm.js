@@ -56,7 +56,7 @@ const OLLAMA_MAP = {
   'careerlm-small':  'cs-sonnet:latest',   // 2B   — 50 t/s, balanced
   'careerlm-base':   'cs-sonnet:latest',   // 2B   — 50 t/s, balanced
   'careerlm-large':  'cs-sonnet:latest',   // 2B   — 50 t/s, best quality/speed
-  'careerlm-xl':     'cs-opus:latest',     // 7B   — deep reasoning only
+  'careerlm-xl':     'cs-opus:latest',     // 32B (Aya Expanse, 2026-08-07 upgrade from 7B) — deep reasoning, real 23-language coverage
   'careeragent-v1':  'cs-sonnet:latest',   // 2B   — agent tasks
   'careerscore-v1':  'cs-sonnet:latest',   // 2B   — scoring
 };
