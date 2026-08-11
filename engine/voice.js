@@ -114,13 +114,24 @@ const VOICES = {
   },
 };
 
-// XTTS-v2's actual supported-language list (17 languages) — the previous
-// version of this list included 'yo' (Yoruba) and 'sw' (Swahili), neither
-// of which XTTS-v2 supports at all (a request for either would silently
-// mispronounce or fail), and was missing 'tr'/'cs'/'hu' (Turkish/Czech/
-// Hungarian), which it genuinely does support.
+// Chatterbox Multilingual's real, official supported-language list (23
+// languages, verified 2026-08-11 against ResembleAI's own HuggingFace
+// model card — https://huggingface.co/ResembleAI/chatterbox). Replaces
+// the old XTTS-v2-era 17-language list this constant carried until the
+// 2026-08-08 engine migration — that list is NOT a subset of this one:
+// XTTS-v2 genuinely supported 'cs'/'hu' (Czech/Hungarian), which
+// Chatterbox does not claim; Chatterbox genuinely supports 'da'/'el'/
+// 'fi'/'he'/'ms'/'no'/'sv'/'sw' (Danish/Greek/Finnish/Hebrew/Malay/
+// Norwegian/Swedish/Swahili), which XTTS-v2 never did. Overall real voice
+// coverage for 'cs'/'hu' is preserved via the ElevenLabs fallback tier
+// (its own native-language list already includes both) — this constant
+// only needed to stop overclaiming Chatterbox's own real coverage.
+// zh-cn kept in the existing short-code convention already used
+// elsewhere in this codebase (Chatterbox's own quickstart docs use bare
+// 'zh' — untested here whether the real server normalizes 'zh-cn', not
+// changed as part of this fix).
 const SUPPORTED_LANGUAGES = [
-  'en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh-cn', 'ja', 'hu', 'ko', 'hi',
+  'ar', 'da', 'de', 'el', 'en', 'es', 'fi', 'fr', 'he', 'hi', 'it', 'ja', 'ko', 'ms', 'nl', 'no', 'pl', 'pt', 'ru', 'sv', 'sw', 'tr', 'zh-cn',
 ];
 
 // ═══════════════════════════════════════════════════════════
