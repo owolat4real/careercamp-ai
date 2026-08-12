@@ -234,7 +234,12 @@ async function callOllama(ollamaModel, messages, maxTokens, task, numCtx) {
     max_tokens:  maxTokens,
     temperature: task === 'classify' ? 0.1 : 0.7,
     stream:      false,
-    options:     { num_gpu: numGpu, num_batch: 512, num_ctx: numCtx || 32768 },
+    // Real fix (2026-08-11): 32768 exceeded every real deployed tier's
+    // actual Modelfile ceiling -- callers now always pass a real numCtx
+    // via featureModelMap.js's corrected TIER_CONFIG, so this fallback
+    // should rarely fire, but 2048 (the smallest real ceiling, cs-haiku's)
+    // is the only value that's never wrong if it ever does.
+    options:     { num_gpu: numGpu, num_batch: 512, num_ctx: numCtx || 2048 },
   }, { timeout: TIMEOUT, httpAgent });
 
   if (!resp.data?.choices?.[0]) throw new Error(`Ollama empty response for ${ollamaModel}`);
@@ -466,7 +471,8 @@ async function* streamLocal(ollamaModel, messages, maxTokens, task, isHaiku, num
   const resp = await axios.post(`${OLLAMA_URL}/v1/chat/completions`, {
     model: ollamaModel, messages, max_tokens: maxTokens,
     temperature: task === 'classify' ? 0.1 : 0.7,
-    stream: true, options: { num_gpu: numGpu, num_batch: 512, num_ctx: numCtx || 32768 },
+    // Real fix (2026-08-11): same as callOllama() above.
+    stream: true, options: { num_gpu: numGpu, num_batch: 512, num_ctx: numCtx || 2048 },
   }, { responseType: 'stream', timeout: TIMEOUT });
 
   let buf = '';

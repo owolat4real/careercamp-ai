@@ -1,0 +1,65 @@
+# ══════════════════════════════════════════════════════════════════
+# Real, isolated Python data-analysis execution — RunPod Serverless build
+# Closes the real gap the JS-only sandbox (cs_fixed/services/
+# workspaceAgentCode.js) deliberately doesn't cover: pandas/numpy/
+# matplotlib and real file I/O. That JS sandbox stays exactly as it was
+# (still the fast, always-on, zero-network-round-trip path for simple
+# math) — this is a SEPARATE, opt-in, meaningfully more powerful tool for
+# genuine data-analysis work, isolated the same way SadTalker/SVD/XTTS
+# already are in this repo: its own RunPod Serverless endpoint, no shared
+# filesystem or secrets with the main cs_fixed Node app, network-isolated
+# from it by construction (a real HTTP job submitted to RunPod's own
+# infrastructure, not a subprocess spawned by the Node app itself).
+#
+# Deliberately CPU-only (plain python:3.11-slim, no CUDA) — pandas/numpy/
+# matplotlib don't need a GPU, and the real GPU pod this platform actually
+# runs on (a single 24GB RTX A5000, see engine/featureModelMap.js's real
+# 2026-08-11 correction) has zero spare VRAM for anything new. Running
+# this as its own CPU-only endpoint means it never competes with the
+# LLM/video/voice tiers for the one GPU that's actually there.
+#
+# Real, honest isolation model — read before assuming more than what's
+# actually true: RunPod's own per-job container is the PRIMARY boundary
+# (matches this repo's existing SadTalker/SVD/XTTS precedent — genuinely
+# separate from cs_fixed, no shared filesystem/secrets, only what's in
+# the job payload). Inside that container, real defense-in-depth: a
+# low-privilege non-root user, real CPU-time/memory `resource.setrlimit`
+# caps and a real wall-clock timeout (see runpod_handler.py/_engine.py).
+# What this does NOT do: block outbound network from within the
+# execution subprocess. Real Python code executed here CAN still make
+# real HTTP requests unless RunPod's own network policy restricts it at
+# the container/account level — genuinely isolating that further would
+# need real network-namespace/iptables control this Dockerfile alone
+# can't guarantee inside a RunPod Serverless container. Flagged here
+# honestly rather than claimed as solved.
+# ══════════════════════════════════════════════════════════════════
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Real low-privilege user -- pip install still needs root, so this
+# builds as root and drops to pyexec for good right before CMD. That
+# means the handler process AND every real subprocess it spawns to
+# execute user-submitted code inherit the same non-root user for the
+# container's entire real runtime -- simpler and just as effective as
+# dropping privileges mid-execution, standard real Docker practice.
+RUN useradd --create-home --shell /usr/sbin/nologin pyexec
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY _engine.py .
+COPY runpod_handler.py .
+RUN chown -R pyexec:pyexec /app
+
+# Real matplotlib backend that doesn't need a display server -- this
+# container has none, and 'Agg' is the standard real headless-rendering
+# backend for exactly this case (real PNG bytes out, no X11 needed).
+ENV MPLBACKEND=Agg
+
+USER pyexec
+
+# No EXPOSE/HEALTHCHECK -- RunPod Serverless workers pull jobs from
+# RunPod's own queue rather than listening for inbound HTTP traffic
+# (same as every other Dockerfile.runpod in this repo).
+CMD ["python", "runpod_handler.py"]

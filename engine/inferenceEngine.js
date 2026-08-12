@@ -43,10 +43,15 @@ const OLLAMA = process.env.CS_INFERENCE_URL || 'http://localhost:11434';
 const OLLAMA_TIMEOUT = 45000;
 
 /* ── MODEL REGISTRY ────────────────────────────────────────────── */
+// Real, live-caught bug (2026-08-11): contextWindow here didn't match
+// the real deployed Modelfile ceilings either -- same root cause and
+// same fix as engine/featureModelMap.js's TIER_CONFIG (see that file's
+// comment for the full real explanation). Aligned down to the real,
+// currently-deployed num_ctx: cs-sonnet 4096, cs-haiku 2048.
 const MODELS = {
-  'cs-sonnet':     { ollamaName: 'cs-sonnet',     maxTokens: 4096, contextWindow: 32768, tier: 'quality' },
-  'cs-haiku':      { ollamaName: 'cs-haiku',      maxTokens: 1024, contextWindow: 16384, tier: 'fast'    },
-  'careerlm-nano': { ollamaName: 'cs-haiku',      maxTokens: 512,  contextWindow: 8192,  tier: 'nano'    },
+  'cs-sonnet':     { ollamaName: 'cs-sonnet',     maxTokens: 4096, contextWindow: 4096, tier: 'quality' },
+  'cs-haiku':      { ollamaName: 'cs-haiku',      maxTokens: 1024, contextWindow: 2048, tier: 'fast'    },
+  'careerlm-nano': { ollamaName: 'cs-haiku',      maxTokens: 512,  contextWindow: 2048, tier: 'nano'    },
 };
 
 /* ── TASK → MODEL MAP ──────────────────────────────────────────── */
@@ -246,7 +251,12 @@ async function _callOllama({ model, messages, maxTokens, task, numCtx }) {
       max_tokens:  maxTokens,
       temperature: task === 'json_extract' || task === 'classify' ? 0.1 : 0.7,
       stream:      false,
-      options:     { num_gpu: numGpu, num_batch: 512, num_ctx: numCtx || 32768 },
+      // Real fix (2026-08-11): 32768 exceeded every real deployed tier's
+      // actual Modelfile ceiling; 2048 (cs-haiku's real ceiling, the
+      // smallest of the three) is never wrong regardless of which model
+      // this call targets. See engine/featureModelMap.js's TIER_CONFIG
+      // comment for the full real explanation.
+      options:     { num_gpu: numGpu, num_batch: 512, num_ctx: numCtx || 2048 },
     }, { timeout: OLLAMA_TIMEOUT });
 
     if (!resp.data?.choices?.[0]) throw new Error(`Ollama empty response for ${model}`);
@@ -317,7 +327,10 @@ async function* _streamWithFallback({ modelKey, modelCfg, fullMessages, tokenLim
       messages:   fullMessages,
       max_tokens: tokenLimit,
       stream:     true,
-      options:    { num_gpu: _numGpu, num_batch: 512, num_ctx: modelCfg.contextWindow || 32768 },
+      // Real fix (2026-08-11): same as _callOllama() above -- 2048 is the
+      // safe real fallback, matches the MODELS registry's own corrected
+      // contextWindow values so this should rarely even need to fire.
+      options:    { num_gpu: _numGpu, num_batch: 512, num_ctx: modelCfg.contextWindow || 2048 },
     }, { responseType: 'stream', timeout: OLLAMA_TIMEOUT });
 
     let buf = '';

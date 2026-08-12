@@ -338,7 +338,14 @@ async function ollamaInfer(prompt, system, modelTag, opts = {}) {
     model:      modelTag,
     stream:     false,
     keep_alive: '10m',
-    options: { temperature: opts.temp || 0.78, num_predict: opts.maxTokens || 4096, num_ctx: opts.numCtx || 8192 },
+    // Real, live-caught bug (2026-08-11): 8192 exceeded cs-haiku's/cs-sonnet's
+    // real deployed Modelfile ceilings (2048/4096) whenever a caller didn't
+    // pass an explicit numCtx -- this function is model-agnostic (modelTag
+    // is caller-supplied), so the fallback can't assume which real model is
+    // being called. 2048 is the smallest real ceiling across all three
+    // deployed tiers -- the only value that's never wrong regardless of
+    // which model this call actually targets.
+    options: { temperature: opts.temp || 0.78, num_predict: opts.maxTokens || 4096, num_ctx: opts.numCtx || 2048 },
     messages: [
       { role: 'system', content: system },
       { role: 'user',   content: prompt },
@@ -352,7 +359,10 @@ async function* ollamaStream(prompt, system, modelTag, opts = {}) {
     model:      modelTag,
     stream:     true,
     keep_alive: '10m',
-    options: { temperature: opts.temp || 0.82, num_predict: opts.maxTokens || 8000, num_ctx: opts.numCtx || 8192 },
+    // Same real fix as ollamaInfer() above -- 2048 is the smallest real
+    // ceiling across all three deployed tiers, safe regardless of which
+    // model this call actually targets.
+    options: { temperature: opts.temp || 0.82, num_predict: opts.maxTokens || 8000, num_ctx: opts.numCtx || 2048 },
     messages: [
       { role: 'system', content: system },
       { role: 'user',   content: prompt },

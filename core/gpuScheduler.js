@@ -3,10 +3,14 @@
  * gpuScheduler.js — GPU-aware concurrency limiter per model tier.
  *
  * Original limits below were validated on an RTX 3050 Laptop GPU (4 GB
- * VRAM, 2560 CUDA cores) — cs-opus has since moved to a real 70B model on
- * a 40-80GB pod (see gpuLayerCalculator.js), which changes ITS number
- * specifically; haiku/sonnet stay on the same small models these limits
- * were validated against, so their numbers are unchanged.
+ * VRAM, 2560 CUDA cores). Real, corrected state (2026-08-11): cs-opus is
+ * NOT on a 40-80GB pod — that was an intermediate, never-shipped plan.
+ * The real, currently-deployed pod is a single RTX A5000 (24GB VRAM),
+ * and cs-opus is a real 32B model (Aya Expanse), partially GPU-offloaded
+ * (see cs_fixed/models/Modelfile.cs-opus's own 2026-08-08 production-OOM
+ * correction — the real ground truth for what's actually deployed).
+ * haiku/sonnet stay on the same small models these limits were validated
+ * against, so their numbers are unchanged.
  *
  * Concurrent streams on the same model share GPU bandwidth/compute — past
  * a hardware-validated limit, queuing requests and running them
@@ -15,9 +19,11 @@
  * Safe concurrency limits:
  *   haiku  (1B):   3 concurrent streams — small model, wide batch headroom, validated on RTX 3050
  *   sonnet (3B):   2 concurrent streams — medium model, moderate VRAM/compute, validated on RTX 3050
- *   opus   (70B):  1 concurrent stream  — large model, no real headroom for a second stream even
- *                  on 40-80GB (a single 70B load already uses most of the budget) — not yet
- *                  re-validated with real pod throughput data, kept conservative at 1
+ *   opus   (32B):  1 concurrent stream  — large model, no real headroom for a second stream on
+ *                  the real 24GB A5000 (a single 32B load, partially GPU-offloaded, already
+ *                  uses most of the real budget alongside sonnet/haiku/embed/vision/Chatterbox
+ *                  coexisting) — not yet re-validated with real pod throughput data, kept
+ *                  conservative at 1
  *   nano         :  4 concurrent streams — tiny model, negligible VRAM
  *
  * Requests that arrive when the slot is full are queued (spin-wait, 100 ms

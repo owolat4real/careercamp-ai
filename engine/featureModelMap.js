@@ -7,12 +7,13 @@
  * references stable tier names (careerlm-nano / fast / base / long / deep)
  * rather than raw model names that could change.
  *
- * Tier hierarchy:
- *   careerlm-nano   Classifiers, yes/no, single-value outputs    cs-haiku   4K ctx
- *   careerlm-fast   Short structured output, headlines, snippets  cs-haiku   8K ctx
- *   careerlm-base   Long-form reasoning, standard career tasks    cs-sonnet  32K ctx
- *   careerlm-long   Document/contract analysis, full CV rewrites  cs-sonnet  131K ctx
- *   careerlm-deep   Reserved — deep multi-factor analysis         cs-opus    32K ctx
+ * Tier hierarchy (real numCtx values below, corrected 2026-08-11 — see
+ * that date's comment on TIER_CONFIG for why these numbers changed):
+ *   careerlm-nano   Classifiers, yes/no, single-value outputs    cs-haiku   2K ctx
+ *   careerlm-fast   Short structured output, headlines, snippets  cs-haiku   2K ctx
+ *   careerlm-base   Long-form reasoning, standard career tasks    cs-sonnet  4K ctx
+ *   careerlm-long   Document/contract analysis, full CV rewrites  cs-sonnet  4K ctx (name is real but honest: see note below)
+ *   careerlm-deep   Reserved — deep multi-factor analysis         cs-opus    8K ctx
  *
  * Fallback order (all tiers, all the time):
  *   Ollama (tier-appropriate model + exact GPU layers)
@@ -28,20 +29,43 @@ const { FEATURE_MAP } = require('../config/featureMap');
    ollamaModel: the Ollama model name to call
    numCtx:      context window to allocate (input + KV cache budget)
    maxOut:      hard cap on output tokens for this tier
-   gpuTier:     passed to gpuScheduler for concurrency slot management     */
+   gpuTier:     passed to gpuScheduler for concurrency slot management
+
+   Real, live-caught bug (2026-08-11): these numCtx values didn't match
+   what's actually baked into the real deployed Modelfiles (cs_fixed/
+   models/Modelfile.cs-haiku/-sonnet/-opus). num_ctx is sent as a real
+   per-request Ollama option (see routes/camp.js's callOllama/streamLocal),
+   so every real request on every tier was asking Ollama to allocate a
+   bigger KV cache than the Modelfile's own deliberately-tuned ceiling
+   (chosen specifically to leave headroom for cs-sonnet/haiku/opus/embed/
+   vision/Chatterbox to coexist on the real, single 24GB A5000 card this
+   platform actually runs on — see Modelfile.cs-opus's own 2026-08-08
+   production-OOM correction). Aligned every tier down to the real,
+   currently-deployed ceiling. Real, honest consequence worth knowing:
+   careerlm-long's whole premise (131K ctx for long documents) is NOT
+   currently deliverable by the real deployed cs-sonnet model (real
+   ceiling 4K) -- the tier is kept (so long-document features still route
+   to cs-sonnet, still get whatever real headroom 4K gives vs nano/fast's
+   2K) but the number is now honest rather than a value that was never
+   actually achievable on this hardware. Closing that gap for real needs
+   either a genuinely bigger-context model or more VRAM, not a bigger
+   number in this file -- see the real GPU-capacity findings elsewhere. */
 const TIER_CONFIG = {
-  'careerlm-nano': { ollamaModel: 'cs-haiku',  numCtx:    4096, maxOut:  512, gpuTier: 'haiku' },
-  'careerlm-fast': { ollamaModel: 'cs-haiku',  numCtx:    8192, maxOut: 1024, gpuTier: 'haiku' },
-  'careerlm-base': { ollamaModel: 'cs-sonnet', numCtx:   32768, maxOut: 4096, gpuTier: 'sonnet' },
-  'careerlm-long': { ollamaModel: 'cs-sonnet', numCtx:  131072, maxOut: 4096, gpuTier: 'sonnet' },
-  'careerlm-deep': { ollamaModel: 'cs-opus',   numCtx:   32768, maxOut: 4096, gpuTier: 'opus'   },
+  'careerlm-nano': { ollamaModel: 'cs-haiku',  numCtx: 2048, maxOut:  512, gpuTier: 'haiku' },
+  'careerlm-fast': { ollamaModel: 'cs-haiku',  numCtx: 2048, maxOut: 1024, gpuTier: 'haiku' },
+  'careerlm-base': { ollamaModel: 'cs-sonnet', numCtx: 4096, maxOut: 4096, gpuTier: 'sonnet' },
+  'careerlm-long': { ollamaModel: 'cs-sonnet', numCtx: 4096, maxOut: 4096, gpuTier: 'sonnet' },
+  'careerlm-deep': { ollamaModel: 'cs-opus',   numCtx: 8192, maxOut: 4096, gpuTier: 'opus'   },
 };
 
 /* ── LONG-CONTEXT OVERRIDES ──────────────────────────────────────────────
    Features that consume long input documents — classified as careerlm-long
-   even though their underlying model is cs-sonnet. The difference is
-   num_ctx: 131072 vs 32768, which reserves KV cache for document-length
-   inputs without blowing VRAM on nano/fast tasks.                          */
+   even though their underlying model is cs-sonnet. Real, current caveat:
+   both careerlm-base and careerlm-long now share the same real 4096
+   numCtx ceiling (see the honest note on TIER_CONFIG above) -- the real
+   benefit these features still get from this classification is a
+   dedicated maxOut budget and gpuTier accounting, not a bigger real
+   context window, until the model/hardware question above is resolved.   */
 const LONG_CTX_FEATURES = new Set([
   'document_analyser',       // reads arbitrary uploaded documents
   'contract_explainer',      // legal contracts — can be 10k-50k tokens
