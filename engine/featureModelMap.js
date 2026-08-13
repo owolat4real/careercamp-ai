@@ -127,9 +127,39 @@ const DEFAULT_TIER = 'careerlm-base';
  * Resolve a feature to its tier config.
  * @returns {{ tier, ollamaModel, numCtx, maxOut, gpuTier }}
  */
-function getFeatureTier(featureId) {
+/* ── REQUEST-TYPE TOKEN BUDGETS (opt-in, additive) ───────────────────────
+   Real, separate from TIER_CONFIG's per-MODEL-tier maxOut above (which
+   stays exactly as-is for every existing caller). This table lets a
+   caller who already knows the shape of what it's asking for (a quick
+   yes/no vs. a full career plan) request a real, request-type-scoped
+   budget instead of inheriting whatever the feature's static tier
+   happens to default to. Not wired into any of the ~400 existing
+   getFeatureTier() call sites in this pass — available for a caller
+   (e.g. cs_fixed/services/careerLMOrchestrator.js, when it calls
+   through careercamp-ai rather than directly) to opt into. */
+const REQUEST_TYPE_BUDGETS = {
+  QUICK_ADVICE:     { min: 250,  max: 400  },
+  JOB_DECISION:     { min: 300,  max: 500  },
+  CAREER_DIAGNOSIS: { min: 500,  max: 800  },
+  JOB_COMPARISON:   { min: 600,  max: 1000 },
+  CAREER_PLAN:      { min: 1000, max: 1500 },
+  DEEP_ANALYSIS:    { min: 1500, max: 2500 },
+};
+
+/**
+ * Resolve a feature to its tier config. `requestType` is optional — when
+ * provided and matches a real entry in REQUEST_TYPE_BUDGETS above, the
+ * returned maxOut is overridden to that request type's real midpoint
+ * instead of the tier's static value. Omitted (every existing caller
+ * today), behavior is byte-for-byte unchanged.
+ * @returns {{ tier, ollamaModel, numCtx, maxOut, gpuTier }}
+ */
+function getFeatureTier(featureId, requestType = null) {
   const tier = FEATURE_TIER_MAP[featureId] || DEFAULT_TIER;
-  return { tier, ...TIER_CONFIG[tier] };
+  const cfg = { tier, ...TIER_CONFIG[tier] };
+  const budget = requestType && REQUEST_TYPE_BUDGETS[requestType];
+  if (budget) cfg.maxOut = Math.round((budget.min + budget.max) / 2);
+  return cfg;
 }
 
 /**
@@ -145,4 +175,4 @@ function routeSummary(featureId) {
   return `${featureId} → ${tier} (${ollamaModel}, ${Math.round(numCtx / 1024)}K ctx) | ${fallback}`;
 }
 
-module.exports = { FEATURE_TIER_MAP, TIER_CONFIG, DEFAULT_TIER, getFeatureTier, routeSummary };
+module.exports = { FEATURE_TIER_MAP, TIER_CONFIG, DEFAULT_TIER, REQUEST_TYPE_BUDGETS, getFeatureTier, routeSummary };
