@@ -222,14 +222,23 @@ const HF_MAP = {
 };
 
 // Groq model map (free, fast, reliable streaming)
+// Live-caught (2026-08-19): every one of these was still on
+// llama-3.1-8b-instant / llama-3.3-70b-versatile, both fully removed from
+// Groq's catalog (404 on every call, not 429 — so _groqMark429()'s cooldown
+// logic never caught it either, here or anywhere else this map is used).
+// cs_fixed/middleware/brain.js already re-verified a live replacement pool
+// on 2026-08-17 (see its own GROQ_POOL comment — this is the second time
+// this exact failure class has hit a Groq model map on this codebase, just
+// never ported to this sibling gateway). Reusing that same verified-live
+// model here rather than re-probing independently.
 const GROQ_MAP = {
-  'careerlm-nano':   'llama-3.1-8b-instant',
-  'careerlm-small':  'llama-3.3-70b-versatile',
-  'careerlm-base':   'llama-3.3-70b-versatile',
-  'careerlm-large':  'llama-3.3-70b-versatile',
-  'careerlm-xl':     'llama-3.3-70b-versatile',
-  'careeragent-v1':  'llama-3.3-70b-versatile',
-  'careerscore-v1':  'llama-3.1-8b-instant',
+  'careerlm-nano':   'openai/gpt-oss-20b',
+  'careerlm-small':  'openai/gpt-oss-20b',
+  'careerlm-base':   'openai/gpt-oss-20b',
+  'careerlm-large':  'openai/gpt-oss-120b',
+  'careerlm-xl':     'openai/gpt-oss-120b',
+  'careeragent-v1':  'openai/gpt-oss-120b',
+  'careerscore-v1':  'openai/gpt-oss-20b',
 };
 
 // OpenRouter model fallbacks. All 3 slugs previously here

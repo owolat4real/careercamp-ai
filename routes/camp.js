@@ -105,10 +105,20 @@ function formatProxyResult(proxyResult, featureId) {
 }
 
 /* ── GROQ POOL (model rotation + per-model 429 cooldown tracking) ─── */
+// Live-caught (2026-08-19): all 3 of the old entries here 404 on every
+// call (Groq has fully removed them from its catalog — confirmed live in
+// production logs, 3 separate 404s per request). A 404 isn't a 429, so
+// _groqMark429()'s cooldown never caught it either — every request kept
+// paying the latency of retrying all 3 dead models before falling through
+// to the next provider. Reusing the pool cs_fixed/middleware/brain.js
+// already re-verified live on 2026-08-17 for the identical failure class,
+// rather than re-probing independently.
 const _GROQ_POOL = [
-  'llama-3.3-70b-versatile',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'llama-3.1-8b-instant',
+  'openai/gpt-oss-20b',
+  'groq/compound-mini',
+  'qwen/qwen3.6-27b',
+  'groq/compound',
+  'openai/gpt-oss-120b',
 ];
 const _groqRL   = new Map(); // modelId → { ts, cd }
 const _RL_SHORT = 65_000;   // 65s cooldown for per-minute rate limits
