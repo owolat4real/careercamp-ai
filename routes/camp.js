@@ -653,13 +653,33 @@ router.post('/:featureId', apiKeyGuard, async (req, res) => {
     groundingBlock = buildGroundingBlock(liveData);
   }
 
+  // Live-caught (2026-08-19): FEATURE_PROMPTS/TASK_PROMPTS are written for
+  // markdown/prose output (headers, tables, bullet sections) -- for a
+  // feature.schema-bearing feature (like resume_scorer -> 'score_report'),
+  // that directly conflicts with the JSON schema api-platform's own
+  // prompt asks for in the user message. Different models "resolved" the
+  // conflict differently: reasoning models tried to honor the JSON
+  // request but burned their token budget arguing with themselves about
+  // it first; non-reasoning models just followed the system prompt and
+  // ignored the JSON request outright, returning full markdown. Appended
+  // LAST (after the feature's own instructions) so it has priority as
+  // the most recent instruction, without removing the markdown-formatted
+  // prompts non-schema features still rely on.
+  const jsonOverride = feature.schema
+    ? `OUTPUT FORMAT OVERRIDE: Regardless of any section/heading/table formatting instructed above, your ENTIRE response must be ONLY the valid JSON object the user's message asks for — no markdown, no prose, no headers, no code fences. Start your response with { or [.`
+    : '';
+
   /* Compact system prompt for haiku-tier — ~70% fewer prefill tokens */
   const sysPrompt = isHaikuTier
-    ? `You are CareerLM by Career Studio. ${langHint} Give direct, specific, actionable career advice.`
+    ? [
+        `You are CareerLM by Career Studio. ${langHint} Give direct, specific, actionable career advice.`,
+        jsonOverride,
+      ].filter(Boolean).join('\n\n')
     : [
         FEATURE_PROMPTS[featureId] || TASK_PROMPTS[feature.task] || TASK_PROMPTS.career_advice,
         groundingBlock,
         langHint,
+        jsonOverride,
       ].filter(Boolean).join('\n\n');
 
   /* STEP 5 — Reasoning injection */
