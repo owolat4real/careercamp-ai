@@ -311,6 +311,14 @@ async function externalFallback(feature, messages) {
       try {
         const resp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
           model: modelId, messages, max_tokens: feature.maxTokens, temperature: 0.7,
+          // Live-caught (2026-08-19): the pool includes reasoning models
+          // (qwen3.6-27b, groq/compound, groq/compound-mini) that otherwise
+          // emit a <think> block INSIDE `content` before the real answer —
+          // for a schema-requesting feature with a modest token budget, the
+          // reasoning trace alone consumed the entire budget, truncating
+          // the actual output every time. 'hidden' does the reasoning
+          // server-side without including it in content at all.
+          reasoning_format: 'hidden',
         }, {
           headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
           timeout: 30_000, httpsAgent,
@@ -407,6 +415,7 @@ async function* streamExternal(messages, maxTokens) {
     try {
       const resp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: modelId, messages, max_tokens: maxTokens, temperature: 0.7, stream: true,
+        reasoning_format: 'hidden',
       }, {
         headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
         responseType: 'stream', timeout: 30_000,
@@ -454,6 +463,7 @@ async function callRace(feature, messages, numCtx) {
     messages,
     max_tokens:  feature.maxTokens,
     temperature: 0.7,
+    reasoning_format: 'hidden',
   }, {
     headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
     timeout: 15_000,

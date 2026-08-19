@@ -525,6 +525,11 @@ async function infer(prompt, system, modelId, opts = {}) {
       const res = await groq.chat.completions.create({
         model: groqId, max_tokens: opts.maxTokens || 4096, temperature: opts.temp ?? 0.78,
         messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+        // Same fix as routes/camp.js's Groq pool: reasoning-capable models
+        // otherwise emit a <think> block inside content that can consume
+        // the whole token budget before the real answer. Harmless no-op
+        // for non-reasoning models.
+        reasoning_format: 'hidden',
       });
       const text = res.choices?.[0]?.message?.content || '';
       if (text && text.length >= _minLen) return _withSchema({ text, model: groqId, engine: 'groq', task });
@@ -619,6 +624,7 @@ async function* stream(prompt, system, modelId, opts = {}) {
       const stream = await groq.chat.completions.create({
         model: groqId, max_tokens: opts.maxTokens || 8000, temperature: opts.temp ?? 0.82, stream: true,
         messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+        reasoning_format: 'hidden',
       });
       for await (const chunk of stream) {
         const tok = chunk.choices?.[0]?.delta?.content || '';
