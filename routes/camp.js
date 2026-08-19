@@ -381,8 +381,14 @@ async function externalFallback(feature, messages) {
     try {
       const sysMsg  = messages.find(m => m.role === 'system')?.content || '';
       const userMsg = messages.filter(m => m.role !== 'system');
+      // Live-caught (2026-08-19): gemini-1.5-flash is fully decommissioned
+      // (404 on every call, confirmed live in production logs). Using
+      // 'gemini-flash-lite-latest' -- a maintained alias Google keeps
+      // pointed at its current fast/cheap model (verified live: currently
+      // resolves to gemini-3.5-flash-lite) -- rather than a fixed
+      // versioned name, so this can't go stale the same way again.
       const resp    = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${geminiKey}`,
         {
           contents: userMsg.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
           systemInstruction: { parts: [{ text: sysMsg }] },
