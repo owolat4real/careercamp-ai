@@ -12,7 +12,20 @@
 const FEATURE_MAP = {
 
   /* ── RESUME INTELLIGENCE (Features 1-35) ───────────────────── */
-  'resume_scorer':               { model:'cs-sonnet', maxTokens:800,  schema:'score_report',    streaming:false, piiScrub:true,  task:'cv_analysis'    },
+  // Live-caught (2026-08-19): 800 was enough for a plain-text answer, but
+  // this feature's Groq fallback pool (routes/camp.js's _GROQ_POOL, fixed
+  // earlier tonight from dead llama-3.x slugs to openai/gpt-oss + groq/
+  // compound models) includes groq/compound-mini/groq/compound, which are
+  // reasoning models that emit a <think> block before the real answer.
+  // At 800 tokens the reasoning trace alone consumed most/all of the
+  // budget, truncating the actual JSON mid-object -- api-platform's
+  // proxy-side JSON extraction correctly rejected it as unparseable
+  // rather than silently serving broken data, but every real request was
+  // failing. Same failure class likely affects other schema-requesting
+  // features in this map with similarly tight budgets when they fall
+  // back to a reasoning model; not fixed broadly here since only this
+  // one was directly verified live.
+  'resume_scorer':               { model:'cs-sonnet', maxTokens:2000, schema:'score_report',    streaming:false, piiScrub:true,  task:'cv_analysis'    },
   'resume_auto_optimiser':       { model:'cs-sonnet', maxTokens:1200, schema:'cv_rewrite',      streaming:true,  piiScrub:true,  task:'cv_rewrite'     },
   'resume_rewriter':             { model:'cs-sonnet', maxTokens:1500, schema:'cv_rewrite',      streaming:true,  piiScrub:true,  task:'cv_rewrite'     },
   'ats_keyword_heatmap':         { model:'cs-sonnet', maxTokens:600,  schema:'keyword_map',     streaming:false, piiScrub:true,  task:'ats_analysis'   },
