@@ -134,6 +134,16 @@ function _groqMark429(id, msg = '') {
 }
 function _groqPool() { return _GROQ_POOL.filter(_groqAvail); }
 
+// reasoning_format:'hidden' only applies to Groq's reasoning-capable
+// models (qwen3.6-27b, gpt-oss-*) — groq/compound and groq/compound-mini
+// are agentic tool-use models and reject the param outright with a 400
+// ("reasoning_format is not supported with this model"), confirmed live
+// (2026-08-19). Applying it unconditionally burned 2 guaranteed-400
+// fallback attempts on every request that reached Groq.
+function _groqReasoningFormatOpt(modelId) {
+  return /compound/i.test(modelId) ? {} : { reasoning_format: 'hidden' };
+}
+
 /* ── EXTERNAL FALLBACK CIRCUIT BREAKER ──────────────────────────────── */
 // Opens when all cloud providers consecutively fail — saves latency during outages.
 const _extCB = { failures: 0, openUntil: 0, THRESHOLD: 4, COOLDOWN_MS: 90_000 };
@@ -317,8 +327,10 @@ async function externalFallback(feature, messages) {
           // for a schema-requesting feature with a modest token budget, the
           // reasoning trace alone consumed the entire budget, truncating
           // the actual output every time. 'hidden' does the reasoning
-          // server-side without including it in content at all.
-          reasoning_format: 'hidden',
+          // server-side without including it in content at all — except
+          // compound/compound-mini, which reject the param entirely (see
+          // _groqReasoningFormatOpt above).
+          ..._groqReasoningFormatOpt(modelId),
         }, {
           headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
           timeout: 30_000, httpsAgent,
@@ -421,7 +433,7 @@ async function* streamExternal(messages, maxTokens) {
     try {
       const resp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: modelId, messages, max_tokens: maxTokens, temperature: 0.7, stream: true,
-        reasoning_format: 'hidden',
+        ..._groqReasoningFormatOpt(modelId),
       }, {
         headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
         responseType: 'stream', timeout: 30_000,
@@ -469,7 +481,7 @@ async function callRace(feature, messages, numCtx) {
     messages,
     max_tokens:  feature.maxTokens,
     temperature: 0.7,
-    reasoning_format: 'hidden',
+    ..._groqReasoningFormatOpt(fastModel),
   }, {
     headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
     timeout: 15_000,

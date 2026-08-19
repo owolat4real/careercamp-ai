@@ -2,6 +2,7 @@
   "name": "careercamp-ai-gateway",
   "version": "1.0.0",
   "description": "CareerCamp AI — World-first career intelligence platform (LLM + VLM + Voice + BERT)",
+  "author": "CloudooAI Solution",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
