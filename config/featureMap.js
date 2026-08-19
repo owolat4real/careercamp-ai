@@ -30,7 +30,11 @@ const FEATURE_MAP = {
   'resume_rewriter':             { model:'cs-sonnet', maxTokens:1500, schema:'cv_rewrite',      streaming:true,  piiScrub:true,  task:'cv_rewrite'     },
   'ats_keyword_heatmap':         { model:'cs-sonnet', maxTokens:600,  schema:'keyword_map',     streaming:false, piiScrub:true,  task:'ats_analysis'   },
   'achievement_quantifier':      { model:'cs-sonnet', maxTokens:400,  schema:'cv_bullet',       streaming:false, piiScrub:true,  task:'cv_bullet'      },
-  'impact_scorer':               { model:'cs-haiku',  maxTokens:200,  schema:'impact_score',    streaming:false, piiScrub:false, task:'classify'       },
+  // Live-caught (2026-08-19): 200 tokens truncated the JSON mid-string on
+  // a real live call even with reasoning_format:'hidden' applied — not
+  // the think-block issue this time, genuinely too tight a budget for
+  // {score, hasMetrics, feedback} with a real feedback sentence.
+  'impact_scorer':               { model:'cs-haiku',  maxTokens:400,  schema:'impact_score',    streaming:false, piiScrub:false, task:'classify'       },
   'cv_gap_detector':             { model:'cs-sonnet', maxTokens:600,  schema:'gap_report',      streaming:false, piiScrub:true,  task:'gap_analysis'   },
   'action_verb_optimizer':       { model:'cs-haiku',  maxTokens:150,  schema:null,              streaming:false, piiScrub:false, task:'quick_reply'    },
   'cv_formatter':                { model:'cs-haiku',  maxTokens:300,  schema:null,              streaming:false, piiScrub:true,  task:'summarise'      },
