@@ -18,6 +18,21 @@
 # worth the quota fight.
 set -e
 
+# POD_NAME identifies which pod this is (e.g. "pod1", "pod2") — required
+# so a second pod doesn't collide with the first on Cloudflare Tunnel
+# hostnames (2026-08-23, added alongside the second-GPU-pod rollout, see
+# .claude/plans/serene-floating-coral.md). pod1 needs no environment
+# change: it falls back to today's plain CLOUDFLARE_TUNNEL_TOKEN/hostnames
+# when POD_NAME is unset or literally "pod1".
+POD_NAME="${POD_NAME:-pod1}"
+if [ "$POD_NAME" = "pod1" ]; then
+  TUNNEL_TOKEN="$CLOUDFLARE_TUNNEL_TOKEN"
+  LLM_HOST="llm.careerstudiomax.com"; VIDEO_HOST="video.careerstudiomax.com"; SVD_HOST="svd.careerstudiomax.com"
+else
+  TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN_POD2:?Set CLOUDFLARE_TUNNEL_TOKEN_POD2 for POD_NAME=$POD_NAME (see the second-pod Cloudflare Tunnel setup in DEPLOY_RUNPOD.md)}"
+  LLM_HOST="llm2.careerstudiomax.com"; VIDEO_HOST="video2.careerstudiomax.com"; SVD_HOST="svd2.careerstudiomax.com"
+fi
+
 echo "=== 1. System packages ==="
 command -v ollama >/dev/null || {
   apt-get update -qq
@@ -88,8 +103,16 @@ pkill -f 'talkinghead_server.py' 2>/dev/null || true
 pkill -f 'svd_server.py' 2>/dev/null || true
 sleep 2
 
-OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PARALLEL=1 \
-  OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 nohup ollama serve > /tmp/ollama.log 2>&1 &
+# Real fix (2026-08-23): this inline invocation had drifted from
+# /root/start_ollama.sh's real, live-tuned values (OLLAMA_NUM_PARALLEL=1
+# here vs. =4 there, no OLLAMA_KV_CACHE_TYPE/OLLAMA_MAX_QUEUE at all) --
+# a full pod restart run through THIS script (the documented recovery
+# path) would have silently reverted that day's live capacity fix. Synced
+# to match. OLLAMA_MAX_LOADED_MODELS=4 was also live-fixed today (was 2,
+# see /root/start_ollama.sh's own history) -- already correct here, kept.
+OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PARALLEL=4 \
+  OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
+  nohup ollama serve > /tmp/ollama.log 2>&1 &
 disown
 sleep 5
 
@@ -103,9 +126,10 @@ cd /workspace/careercamp-ai/_svd_src && nohup ./venv/bin/python svd_server.py > 
 disown
 sleep 3
 
-# CLOUDFLARE_TUNNEL_TOKEN must be set in the shell environment before
-# running this script — not hardcoded here.
-nohup cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" > /tmp/cloudflared.log 2>&1 &
+# CLOUDFLARE_TUNNEL_TOKEN (pod1) / CLOUDFLARE_TUNNEL_TOKEN_POD2 (pod2)
+# must be set in the shell environment before running this script — not
+# hardcoded here. TUNNEL_TOKEN resolved by POD_NAME above.
+nohup cloudflared tunnel run --token "$TUNNEL_TOKEN" > /tmp/cloudflared.log 2>&1 &
 disown
 sleep 10
 
@@ -117,7 +141,7 @@ curl -s http://localhost:3004/health -o /dev/null -w 'talkinghead(3004): %{http_
 curl -s http://localhost:3005/health -o /dev/null -w 'svd        (3005): %{http_code}\n'
 
 echo ""
-echo "Public URLs (stable, named Cloudflare Tunnel):"
-echo "  https://llm.careerstudiomax.com"
-echo "  https://video.careerstudiomax.com"
-echo "  https://svd.careerstudiomax.com"
+echo "Public URLs (stable, named Cloudflare Tunnel — $POD_NAME):"
+echo "  https://$LLM_HOST"
+echo "  https://$VIDEO_HOST"
+echo "  https://$SVD_HOST"
