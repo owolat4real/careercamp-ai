@@ -236,7 +236,15 @@ RULES:
 - Minimum CV output: 300 words
 - Minimum transformation table: 8 rows
 - Never add fictional achievements or made-up metrics
-- If the user hasn't provided numbers, use "[X]%" or "[quantify this]" as a prompt, not invented figures`,
+- If the user hasn't provided numbers, write the bullet with a strong verb and concrete scope but NO number
+  (e.g. "Led a cross-functional team to deliver the migration ahead of schedule", not "Led a team of [X] to deliver...").
+  Never write a bracket placeholder like "[X]%" or "[quantify this]" into the CV text — a downloadable, submittable
+  CV can never contain editing artefacts. List every metric gap instead as its own line under ## ⚠️ LIMITATIONS
+  (e.g. "Bullet 3 (Ops Lead role): ask the user for the team size and % efficiency gain to quantify this").
+- The ## ✅ OPTIMISED CV section is the literal text the user downloads and submits to employers: it must contain
+  ONLY finished, submittable CV prose. Never place a [VERIFIED]/[INFERRED]/[ESTIMATED]/[UNKNOWN] confidence tag,
+  a bracket placeholder, or any other editing artefact inside that section. Those tags belong exclusively in
+  ## 📊 TRANSFORMATION SUMMARY and ## ⚠️ LIMITATIONS, where they annotate the edit rather than appearing inside it.`,
 
   resume_rewriter: `${IDENTITY_BLOCK}
 
@@ -266,7 +274,10 @@ OUTPUT STRUCTURE:
 ## 💡 OPTIONAL UPGRADES
 List 3 additional improvements the user could make that require information only they hold (e.g., specific metrics, unreported achievements).
 
-RULES: Minimum 400 words total. No invented metrics. Flag all inferences with [INFERRED].`,
+RULES: Minimum 400 words total. No invented metrics. The ## 📄 REWRITTEN CV section is the literal text the user
+downloads and submits to employers — it must contain ONLY finished, submittable CV prose, never a bracket
+placeholder or a [VERIFIED]/[INFERRED]/[ESTIMATED]/[UNKNOWN] tag. Flag inferences and metric gaps in
+## 🔄 WHAT CHANGED AND WHY or ## 💡 OPTIONAL UPGRADES instead, never inline in the CV text itself.`,
 
   ats_keyword_heatmap: `${IDENTITY_BLOCK}
 
@@ -332,7 +343,11 @@ For each bullet provided:
 STRONG VERB BANK (rotate these — never repeat):
 Accelerated, Architected, Championed, Consolidated, Delivered, Drove, Engineered, Exceeded, Generated, Grew, Implemented, Launched, Led, Optimised, Pioneered, Reduced, Scaled, Secured, Spearheaded, Transformed
 
-RULES: Never invent specific numbers. If no metric exists, write "[X]%" and note "Quantify this: [question to ask the user]." Minimum 3 transformed versions per bullet.`,
+RULES: Never invent specific numbers. If no metric exists, write the TRANSFORMED VERSION and ALTERNATIVE VERSIONS
+using a strong verb and concrete scope but NO number and NO bracket placeholder — those bullets are text the user
+copies straight into a real CV, so they must read as finished prose. Put the metric gap only under
+## 📈 IMPACT ANALYSIS as "What metric the user should verify/add", e.g. "Add the % efficiency gain here once you
+have it." Minimum 3 transformed versions per bullet.`,
 
   impact_scorer: `${IDENTITY_BLOCK}
 
