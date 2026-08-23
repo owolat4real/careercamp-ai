@@ -1,0 +1,70 @@
+# Real multilingual-first revision (2026-08-07, same day as the 70B swap
+# below it replaces): cs-opus targeted meta-llama/Llama-3.3-70B-Instruct
+# briefly, then was corrected to CohereLabs/Aya-Expanse-32B once real
+# multilingual coverage was confirmed as a hard requirement. Verified via
+# real research before this change (not assumed):
+#   - Aya-101 (13B, 101 real languages) was the first candidate but is a
+#     T5 encoder-decoder architecture -- llama.cpp/Ollama only supports
+#     decoder-only (CausalLM) models, confirmed via
+#     https://github.com/ggml-org/llama.cpp/issues/5763 (open, unresolved).
+#     Genuinely cannot run on this platform's serving stack, not just
+#     suboptimal.
+#   - Aya Expanse 32B is real, decoder-only (Command-family lineage),
+#     23 real languages with deep per-language quality (not 101 -- an
+#     honest tradeoff, not the number originally asked for), 128K real
+#     context, and confirmed directly pullable from Ollama's own library
+#     (19 quantized versions listed, incl. Ollama/llama.cpp-compatible).
+# `ollama pull aya-expanse:32b` (real, official library reference) then:
+#   ollama create cs-opus -f Modelfile.cs-opus
+# (this FROM line only resolves once that pull has actually happened on
+# whatever host serves CS_INFERENCE_URL — it is not itself the download)
+FROM aya-expanse:32b
+# CORRECTION (2026-08-08, real production cutover attempt): every comment
+# below assuming "the same 40-80GB pod" was wrong -- the REAL pod actually
+# serving CS_INFERENCE_URL is a single RTX A5000, 24GB total VRAM, shared
+# with cs-sonnet/cs-haiku/cs-embed/vision/Chatterbox TTS all needing to
+# coexist. Confirmed the hard way: num_gpu 99 (full offload) genuinely
+# OOM'd in production -- real error, not a guess: "cudaMalloc failed: out
+# of memory, alloc_tensor_range: failed to allocate CUDA0 buffer of size
+# 19789938688" (~18.4GB for the core weight buffer alone, even with every
+# other model evicted first). This model's real quantized footprint
+# (~18-20GB at Q4_K_M) does NOT fit this real card at full offload with
+# any other model resident, and barely fits even alone.
+# num_ctx 8192 comfortably covers the ~4700-token shared system prompt
+# (middleware/brain.js) with real headroom to spare -- Aya Expanse's real
+# max context is 128K, so this is deliberately conservative for response
+# latency, not a hardware ceiling. Raise if a real workload needs more --
+# but only after re-running training/benchmark_context_window.js against
+# the REAL deployed model first (see that script's header for why). Ran
+# it 2026-08-07 against the only host actually reachable at the time
+# (this local dev machine, CS_INFERENCE_URL=localhost:11434) and it
+# honestly reported the OLD 7.2B model is still what's loaded there, not
+# the real 32B Aya Expanse target -- no pod is reachable from this
+# environment yet to benchmark the real target. That same run's real
+# numbers for the OLD model: 8192 measured 3.2 tok/s (47s wall for 44
+# tokens), and 16384+ failed outright (real 500s, this machine's actual
+# ceiling) -- so even the current value isn't margin to spare on THIS
+# hardware. None of that transfers to the real 32B-on-GPU-pod case; it
+# only proves the benchmark script itself works end-to-end. Re-run it
+# for real once `ollama pull aya-expanse:32b` has actually happened on
+# the real inference host, and let ITS numbers pick this value.
+PARAMETER num_ctx 8192
+PARAMETER num_batch 256
+# UPDATED (2026-08-23, real GPU upgrade — A5000 24GB -> A40 48GB): the
+# partial-offload constraint above was specific to the OLD 24GB card and
+# genuinely no longer applies. Real numbers on the new card: nvidia-smi
+# reports 46068 MiB usable. Full 40-layer offload needs the same real
+# ~18868 MiB (19789938688 bytes, confirmed OOM error above) regardless of
+# card. Budgeting cs-sonnet (~2500 MiB per its own Modelfile's "2B fits
+# in 4GB" claim), cs-haiku (~1500 MiB), cs-embed + CUDA/OS overhead
+# (~1500 MiB) alongside it: 18868 + 2500 + 1500 + 1500 = 24368 MiB total,
+# leaving ~21700 MiB of real spare headroom on this card. Full GPU
+# offload (99, matching cs-haiku/cs-sonnet's own "all layers" convention)
+# is genuinely safe now -- this should also fix the repeated real
+# "cs-opus timeout of 60000ms exceeded" failures from the partial-CPU-
+# offload path on the old card. If this pod's usage pattern changes
+# (more models resident, larger context) re-verify real free VRAM before
+# assuming this still holds, same discipline as the original comment.
+PARAMETER num_gpu 99
+PARAMETER temperature 0.72
+PARAMETER num_predict 4096
