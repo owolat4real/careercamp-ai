@@ -31,7 +31,7 @@ const FOUNDER = {
 
 const COMPANY = {
   name:        process.env.PLATFORM_NAME    || 'CareerStudioMax',
-  tagline:     process.env.PLATFORM_TAGLINE || "The world's most advanced career intelligence platform",
+  tagline:     process.env.PLATFORM_TAGLINE || "A career intelligence platform covering CV building, interview prep, salary negotiation, and job search",
   description:
     'An AI-powered career intelligence platform covering CV building, interview preparation, salary negotiation, LinkedIn optimisation, career planning, and job search across 196 countries.',
 };
