@@ -64,8 +64,15 @@ ln -sfn /root/sadtalker-venv /workspace/careercamp-ai/_sadtalker_src/venv
 # basicsr's bundled torchvision API call is one version behind what's
 # actually installed — patch applies fresh every time the venv is
 # recreated. Idempotent: sed just no-ops if already patched.
-BASICSR_FILE=/workspace/careercamp-ai/_sadtalker_src/venv/lib/python3.11/site-packages/basicsr/data/degradations.py
-[ -f "$BASICSR_FILE" ] && sed -i \
+# Real fix (2026-08-23): this was hardcoded to python3.11, but a fresh
+# `python3 -m venv` on this image actually creates a python3.12 venv --
+# confirmed live (both pod1 and pod2's real venvs use lib/python3.12/,
+# not python3.11/), so this patch was silently never applying and
+# basicsr's import of the real, live install would still have failed.
+# Resolved dynamically instead of hardcoding a version that can drift
+# again on a future base-image change.
+BASICSR_FILE=$(find /workspace/careercamp-ai/_sadtalker_src/venv/lib -maxdepth 5 -path '*/basicsr/data/degradations.py' 2>/dev/null | head -1)
+[ -n "$BASICSR_FILE" ] && [ -f "$BASICSR_FILE" ] && sed -i \
   's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' \
   "$BASICSR_FILE"
 
