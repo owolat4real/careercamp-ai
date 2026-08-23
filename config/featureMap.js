@@ -35,7 +35,15 @@ const FEATURE_MAP = {
   // the think-block issue this time, genuinely too tight a budget for
   // {score, hasMetrics, feedback} with a real feedback sentence.
   'impact_scorer':               { model:'cs-haiku',  maxTokens:400,  schema:'impact_score',    streaming:false, piiScrub:false, task:'classify'       },
-  'cv_gap_detector':             { model:'cs-sonnet', maxTokens:600,  schema:'gap_report',      streaming:false, piiScrub:true,  task:'gap_analysis'   },
+  // Live-caught (2026-08-23): 600 tokens reliably truncated mid-JSON on
+  // real calls (reproduced 5/5 via the Gemini fallback, consistently cut
+  // off ~400-450 tokens in) -- this schema's real shape is an ARRAY of up
+  // to ~8 gap objects (11 fields each, including a free_resources array),
+  // unlike the single-object schemas nearby with similarly-small budgets.
+  // A real successful generation for a typical request measured ~1000-1100
+  // tokens. Raised with real headroom, matching this file's own precedent
+  // (see impact_scorer's comment for the same class of bug).
+  'cv_gap_detector':             { model:'cs-sonnet', maxTokens:2000, schema:'gap_report',      streaming:false, piiScrub:true,  task:'gap_analysis'   },
   'action_verb_optimizer':       { model:'cs-haiku',  maxTokens:150,  schema:null,              streaming:false, piiScrub:false, task:'quick_reply'    },
   'cv_formatter':                { model:'cs-haiku',  maxTokens:300,  schema:null,              streaming:false, piiScrub:true,  task:'summarise'      },
   'cv_length_analyser':          { model:'cs-haiku',  maxTokens:100,  schema:'length_report',   streaming:false, piiScrub:false, task:'classify'       },
