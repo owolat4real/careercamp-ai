@@ -488,14 +488,28 @@ async function infer(prompt, system, modelId, opts = {}) {
     return result;
   };
 
-  // The 20-char floor below exists to reject near-empty/garbled replies from
-  // a real user request. But a deliberately tiny probe (e.g. csModelGateway.js
-  // on the Render side pings with max_tokens:1 just to confirm a model is
+  // The floor below exists to reject near-empty/garbled replies from a real
+  // user request. But a deliberately tiny probe (e.g. csModelGateway.js on
+  // the Render side pings with max_tokens:1 just to confirm a model is
   // warm/reachable) can never produce 20 chars — that's not a broken engine,
   // it's a request that only asked for one token. Scale the floor down for
   // small max_tokens budgets so those probes aren't misread as failures and
   // don't cascade through every other engine unnecessarily.
-  const _minLen = (opts.maxTokens && opts.maxTokens <= 5) ? 1 : 20;
+  //
+  // Real bug caught live (2026-08-23): the general-case floor of 20 also
+  // rejected genuinely correct, complete answers to short-answer prompts --
+  // e.g. "Reply with exactly the word: HEALTHY" (the health-audit probe
+  // both the Transformer API's own endpoint audit and csModelGateway.js
+  // send) legitimately returns "HEALTHY", 7 chars. That's not garbled
+  // output, it's the model following the instruction -- but the old floor
+  // rejected it exactly the same as it would empty/broken output, cascaded
+  // through every other (disabled, ALLOW_EXTERNAL_AI=false) engine, and
+  // fell all the way to the canned offline response, misreporting a
+  // perfectly healthy model as "cold or unhealthy". A genuinely
+  // empty/garbled reply is ~0-2 chars (empty string, a stray token, a lone
+  // punctuation mark) -- 3 catches that without rejecting real short
+  // answers.
+  const _minLen = (opts.maxTokens && opts.maxTokens <= 5) ? 1 : 3;
 
   if (ollamaAvailable) {
     const tried = new Set();
