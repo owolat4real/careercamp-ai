@@ -111,6 +111,29 @@ python3 -c "import fastapi" 2>/dev/null || {
   pip3 install -r /tmp/requirements-trimmed.txt --ignore-installed blinker --break-system-packages >/dev/null 2>&1
 }
 
+# Real gap found live (2026-08-24): tts_server.py existed in this repo,
+# deliberately isolated in its own venv (torch==2.6.0/transformers==5.2.0,
+# incompatible with api_server.py's shared venv -- see this file's own
+# header comment), but was NEVER added here -- it simply never ran on
+# either pod, so every voice request silently fell through to the
+# "browser TTS" JSON fallback (services/voiceSynth.js's callers saw
+# voiceAvailable:false on every real request). Idempotent: only runs the
+# real install (torch download + chatterbox-tts, several GB) if venv-tts
+# doesn't already have it. TMPDIR/pip cache-dir/HF_HOME are all redirected
+# to /workspace -- the container's own root disk is only ~30GB and pip's
+# default cache + HuggingFace's default model cache both live on it,
+# confirmed live to genuinely exhaust it (ENOSPC) on both pods otherwise;
+# /workspace is a much larger persistent network volume.
+cd /workspace/careercamp-ai
+./venv-tts/bin/python -c "import chatterbox" 2>/dev/null || {
+  python3 -m venv venv-tts
+  mkdir -p /workspace/pip_tmp /workspace/pip_cache
+  TMPDIR=/workspace/pip_tmp ./venv-tts/bin/pip install --no-cache-dir --cache-dir=/workspace/pip_cache \
+    torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 >/dev/null 2>&1
+  TMPDIR=/workspace/pip_tmp ./venv-tts/bin/pip install --no-cache-dir --cache-dir=/workspace/pip_cache \
+    chatterbox-tts fastapi uvicorn >/dev/null 2>&1
+}
+
 echo "=== 6. Starting all services ==="
 pkill -f 'ollama serve' 2>/dev/null || true
 pkill -f 'node server.js' 2>/dev/null || true
@@ -118,6 +141,7 @@ pkill -f 'cloudflared tunnel' 2>/dev/null || true
 pkill -f 'python3 api_server.py' 2>/dev/null || true
 pkill -f 'talkinghead_server.py' 2>/dev/null || true
 pkill -f 'svd_server.py' 2>/dev/null || true
+pkill -f 'tts_server.py' 2>/dev/null || true
 sleep 2
 
 # Real fix (2026-08-23): this inline invocation had drifted from
@@ -133,13 +157,21 @@ OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PAR
 disown
 sleep 5
 
-cd /workspace/careercamp-ai && nohup node server.js > /tmp/gateway.log 2>&1 &
+# TTS_SERVER_URL=http://localhost:3006 -- tts_server.py binds
+# TTS_SERVER_PORT (below), deliberately NOT 3004 (talkinghead_server.py
+# already owns that port; tts_server.py's own header comment says 3004
+# but that was never actually reconciled against talkinghead's real
+# claim on it, confirmed live 2026-08-24). engine/voice.js needs this
+# env var so it targets the real port instead of the wrong default.
+cd /workspace/careercamp-ai && TTS_SERVER_URL=http://localhost:3006 nohup node server.js > /tmp/gateway.log 2>&1 &
 disown
 cd /workspace/careercamp-ai && COQUI_TOS_AGREED=1 nohup python3 api_server.py > /tmp/mlserver.log 2>&1 &
 disown
 cd /workspace/careercamp-ai/_sadtalker_src && nohup ./venv/bin/python talkinghead_server.py > /tmp/talkinghead.log 2>&1 &
 disown
 cd /workspace/careercamp-ai/_svd_src && nohup ./venv/bin/python svd_server.py > /tmp/svd.log 2>&1 &
+disown
+cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 nohup ./venv-tts/bin/python tts_server.py > /tmp/tts_server.log 2>&1 &
 disown
 sleep 3
 
@@ -156,6 +188,7 @@ curl -s http://localhost:3002/health -o /dev/null -w 'gateway    (3002): %{http_
 curl -s http://localhost:3003/health -o /dev/null -w 'ml-server  (3003): %{http_code}\n'
 curl -s http://localhost:3004/health -o /dev/null -w 'talkinghead(3004): %{http_code}\n'
 curl -s http://localhost:3005/health -o /dev/null -w 'svd        (3005): %{http_code}\n'
+curl -s -X POST http://localhost:3006/v1/tts -H 'Content-Type: application/json' -d '{"text":"ok"}' -o /dev/null -w 'tts        (3006): %{http_code} (200 once the model is warm; POST-only, no /health route)\n'
 
 echo ""
 echo "Public URLs (stable, named Cloudflare Tunnel — $POD_NAME):"
