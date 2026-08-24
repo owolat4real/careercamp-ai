@@ -44,6 +44,21 @@ const { buildOfflineResponse }    = require('../core/offlineResponder');
 const pii    = new _PII();
 const memory = new _MEM();
 
+// Mirrors api-platform's campProxy.js _stripThinkBlock/_extractJSONText --
+// the same lenient extraction (strip <think>, strip markdown fences, fall
+// back to bracket-matching for prose-wrapped JSON) used as a VALIDATION
+// check here rather than a transform: if this can't find parseable JSON
+// even with that leniency, campProxy.js's identical downstream check
+// won't either, and it isn't safe to cache.
+function _looksLikeValidJSON(content) {
+  const stripped = String(content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+    .replace(/^```json\s*/im, '').replace(/^```\s*/im, '').replace(/```\s*$/m, '').trim();
+  try { JSON.parse(stripped); return true; } catch (_) {}
+  const match = stripped.match(/[{\[][\s\S]*[}\]]/);
+  if (match) { try { JSON.parse(match[0]); return true; } catch (_) {} }
+  return false;
+}
+
 /* ── CONFIG ─────────────────────────────────────────────────────── */
 const OLLAMA_URL = process.env.CS_INFERENCE_URL || 'http://localhost:11434';
 const TIMEOUT    = 45_000;
@@ -819,8 +834,26 @@ router.post('/:featureId', apiKeyGuard, async (req, res) => {
   }
 
   /* Cache the final response (non-personalised features only) */
+  // Real, live-caught bug (2026-08-24): this cached result.content
+  // unconditionally, with zero validation. A schema feature (resume_scorer
+  // etc.) that generates genuinely malformed JSON even once (confirmed
+  // live: a real cached response with a missing property name mid-object,
+  // "Expected double-quoted property name in JSON") gets replayed as the
+  // SAME broken result to every identical future request for this
+  // response cache's full 24h TTL -- api-platform's campProxy.js then
+  // fails JSON-extraction on that exact cached text every single time and
+  // returns "model_unavailable... please retry", except retrying with the
+  // same input just re-hits the same poisoned cache entry, making the
+  // suggested retry permanently useless. Only guards schema features
+  // (feature.schema truthy, per config/featureMap.js) -- plain-text
+  // features (chat etc.) were never at risk and stay untouched.
   if (!isSalary) {
-    responseCache.set(featureId, inputText, { country: req.body?.country, currentRole: req.body?.role, language }, result.content);
+    const cacheable = !feature.schema || _looksLikeValidJSON(result.content);
+    if (cacheable) {
+      responseCache.set(featureId, inputText, { country: req.body?.country, currentRole: req.body?.role, language }, result.content);
+    } else {
+      console.warn(`[CAMP] Skipped caching malformed JSON for ${featureId} (schema:${feature.schema}) -- would have poisoned the cache for every identical future request.`);
+    }
   }
   perfMonitor.recordLatency(Date.now() - t0, false);
 
