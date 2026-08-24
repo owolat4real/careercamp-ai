@@ -691,10 +691,32 @@ function _scheduleOllamaRetry() {
   timer.unref(); // don't keep the process alive just for this
 }
 
+// Real gap found live (2026-08-24): checkMLServer() only ever ran once, at
+// init() -- unlike Ollama above, there was no retry if it failed at boot.
+// Confirmed live: a genuine ML-server bug (a stale numpy install alongside
+// the real one, from an old numpy 2.x leftover, causing infinite recursion
+// on BERT load) meant this pod's Python service failed its very first
+// health check, and mlServerAvailable then stayed false permanently --
+// even after the underlying bug was fixed and the Python process came back
+// healthy on its own, the gateway had no way to notice short of a full
+// restart. Mirrors _scheduleOllamaRetry's exact pattern for consistency.
+function _scheduleMLServerRetry() {
+  const timer = setInterval(async () => {
+    if (mlServerAvailable) { clearInterval(timer); return; }
+    await checkMLServer();
+    if (mlServerAvailable) {
+      console.log('[CareerLM] Python ML server came online (delayed start) — heavy inference now available');
+      clearInterval(timer);
+    }
+  }, 15000);
+  timer.unref(); // don't keep the process alive just for this
+}
+
 module.exports = {
   async init() {
     await Promise.all([checkOllama(), checkMLServer()]);
     if (!ollamaAvailable) _scheduleOllamaRetry();
+    if (!mlServerAvailable) _scheduleMLServerRetry();
   },
   status: () => ({
     ollama:         ollamaAvailable,
