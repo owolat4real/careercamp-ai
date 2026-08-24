@@ -184,7 +184,17 @@ sleep 10
 
 echo "=== 7. Health check ==="
 OLLAMA_MODELS=/workspace/ollama-models ollama ps
-curl -s http://localhost:3002/health -o /dev/null -w 'gateway    (3002): %{http_code}\n'
+# Real bug found live (2026-08-24): this always curled the Node app's
+# hardcoded 3002 fallback (server.js's own `process.env.PORT ||
+# process.env.CAREERCAMP_PORT || 3002`), but both pods' real .env sets
+# CAREERCAMP_PORT=19123, confirmed live via /proc/<pid>/environ and a
+# real netstat — the gateway has never actually listened on 3002 here.
+# This summary line has been silently checking the wrong port on every
+# boot; read the real value from .env instead of a second hardcoded
+# guess that can drift from it again.
+GATEWAY_PORT=$(grep -m1 '^CAREERCAMP_PORT=' /workspace/careercamp-ai/.env 2>/dev/null | cut -d= -f2)
+GATEWAY_PORT="${GATEWAY_PORT:-3002}"
+curl -s "http://localhost:$GATEWAY_PORT/health" -o /dev/null -w "gateway    ($GATEWAY_PORT): %{http_code}\n"
 curl -s http://localhost:3003/health -o /dev/null -w 'ml-server  (3003): %{http_code}\n'
 curl -s http://localhost:3004/health -o /dev/null -w 'talkinghead(3004): %{http_code}\n'
 curl -s http://localhost:3005/health -o /dev/null -w 'svd        (3005): %{http_code}\n'
