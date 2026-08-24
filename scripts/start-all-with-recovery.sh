@@ -95,10 +95,20 @@ echo "=== 4. Node.js gateway deps (node_modules lives on /workspace, survives) =
 cd /workspace/careercamp-ai && npm install --no-audit --no-fund >/dev/null 2>&1 || true
 
 echo "=== 5. Python ML server deps ==="
+# Real bug caught live (2026-08-23), on a genuinely fresh full-pod restart
+# (the exact scenario this whole script exists for): this image's system
+# Python now enforces PEP 668 ("externally-managed-environment") -- a
+# plain `pip3 install` at the system level fails outright with no GPU/
+# network/disk cause, and since it's piped to >/dev/null 2>&1 under
+# `set -e`, the script died here with ZERO log output explaining why,
+# looking like a silent hang. --break-system-packages is the standard,
+# correct override for an intentional system-wide install like this one
+# (not a venv -- api_server.py is meant to run against the system
+# interpreter, matching how it's invoked in step 6 below).
 python3 -c "import fastapi" 2>/dev/null || {
   cd /workspace/careercamp-ai
   grep -vE '^openai-whisper|^datasets|^pandas==' requirements.txt > /tmp/requirements-trimmed.txt
-  pip3 install -r /tmp/requirements-trimmed.txt --ignore-installed blinker >/dev/null 2>&1
+  pip3 install -r /tmp/requirements-trimmed.txt --ignore-installed blinker --break-system-packages >/dev/null 2>&1
 }
 
 echo "=== 6. Starting all services ==="
