@@ -351,7 +351,20 @@ async function externalFallback(feature, messages) {
           timeout: 30_000, httpsAgent,
         });
         const text = resp.data?.choices?.[0]?.message?.content || '';
-        if (text) { console.log(`[CAMP] groq:${modelId} fallback`); return _ok(text, `groq:${modelId}`); }
+        // Real, live-caught gap (2026-08-24): this accepted the FIRST
+        // non-empty response from ANY model in the pool as final, with no
+        // validation -- for a schema feature, a genuinely truncated/
+        // malformed response (confirmed live: "Unterminated string in
+        // JSON", the pool's own JSON payload simply exceeding the budget
+        // for that particular model) got returned as a "success" instead
+        // of trying the NEXT model in the pool, which might complete it
+        // fine. Only guards schema features, same predicate used to guard
+        // the response cache above -- plain-text features are unaffected.
+        if (text && (!feature.schema || _looksLikeValidJSON(text))) {
+          console.log(`[CAMP] groq:${modelId} fallback`);
+          return _ok(text, `groq:${modelId}`);
+        }
+        if (text) console.warn(`[CAMP] groq:${modelId} returned unusable JSON for schema '${feature.schema}' — trying next model in pool`);
       } catch (e) {
         if (e.response?.status === 429) { _groqMark429(modelId, e.response?.data?.error?.message || ''); }
         else { console.warn(`[CAMP] groq:${modelId}:`, e.message?.slice(0, 50)); }
