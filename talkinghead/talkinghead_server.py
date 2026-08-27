@@ -29,13 +29,16 @@ callers never mistake a placeholder for a real persona photo.
 """
 
 import os
+import re
 import sys
 import time
 import shutil
 import logging
 import tempfile
+import subprocess
 from glob import glob
 
+import requests
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -44,6 +47,57 @@ from time import strftime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("talkinghead")
+
+# NOTE (2026-08-27): this file has drifted from what actually runs in
+# production — the real pods run a refactored version at
+# _sadtalker_src/talkinghead_server.py (gitignored, a vendored SadTalker
+# clone per this repo's .gitignore) that delegates model loading/
+# generation to a separate _engine.py, has no ffmpeg/pydub PATH-shimming
+# (unneeded on the pods' Linux image), and now also has the VRAM-eviction
+# fix below. This file is the setup.sh-driven Windows/dev copy and was
+# not kept in sync. Reconciling the two into one real source of truth is
+# a separate, larger task; this specific fix (eviction before model
+# load) is mirrored here so this file doesn't silently fall further
+# behind on a real, live-caught crash fix.
+#
+# Live-caught (2026-08-27): the pod-deployed copy of this process
+# crashed with "RuntimeError: CUDA error: out of memory" while loading
+# its own models (see the model-loading section below) and had no
+# supervisor to restart it -- it sat dead for over an hour, unnoticed.
+# svd_server.py already has this exact pattern (_evict_ollama()) for its
+# own model loading; duplicated here since this process needs the
+# identical real fix: free VRAM from Ollama before loading heavy models,
+# not after crashing.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+MODELS_TO_EVICT = ["cs-opus", "cs-sonnet", "cs-embed", "llava-phi3"]
+MIN_FREE_MIB_TARGET = 4000  # SadTalker's 3 model classes are far lighter than SVD-XT's ~10-11GB
+
+
+def _free_mib() -> int:
+    out = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=5,
+    ).stdout.strip()
+    return int(re.search(r"\d+", out).group())
+
+
+def _evict_ollama_for_startup():
+    if _free_mib() >= MIN_FREE_MIB_TARGET:
+        return
+    logger.info(f"[TalkingHead] Only {_free_mib()}MiB free before model load — evicting Ollama models for headroom")
+    for model in MODELS_TO_EVICT:
+        try:
+            requests.post(f"{OLLAMA_URL}/api/generate", json={"model": model, "prompt": "", "keep_alive": 0}, timeout=10)
+        except Exception as e:
+            logger.warning(f"[TalkingHead] Could not evict {model}: {e}")
+    for _ in range(10):
+        if _free_mib() >= MIN_FREE_MIB_TARGET:
+            break
+        time.sleep(0.5)
+    logger.info(f"[TalkingHead] Free VRAM after eviction: {_free_mib()}MiB")
+
+
+_evict_ollama_for_startup()
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

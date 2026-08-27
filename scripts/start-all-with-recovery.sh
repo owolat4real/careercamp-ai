@@ -191,6 +191,16 @@ cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 
 disown
 sleep 3
 
+# Real gap found live (2026-08-27): talkinghead_server.py crashed from a
+# CUDA OOM under heavy load and sat dead for over an hour, unnoticed --
+# none of the 4 aux Python servers above have any restart-on-crash
+# supervision. This plain polling watchdog fixes that going forward
+# without changing how the container itself boots (see the script's own
+# header for why that specific approach is deliberately avoided here).
+cd /workspace/careercamp-ai/scripts && chmod +x aux-server-watchdog.sh && nohup ./aux-server-watchdog.sh > /tmp/watchdog.log 2>&1 &
+disown
+sleep 1
+
 # CLOUDFLARE_TUNNEL_TOKEN (pod1) / CLOUDFLARE_TUNNEL_TOKEN_POD2 (pod2)
 # must be set in the shell environment before running this script — not
 # hardcoded here. TUNNEL_TOKEN resolved by POD_NAME above. Skipped
