@@ -194,6 +194,26 @@ def _make_room():
     return _stop_aux_servers()
 
 
+# Live-caught (2026-08-27): "Input type (torch.cuda.HalfTensor) and weight
+# type (torch.HalfTensor) should be the same" crashed a generation mid-run
+# with no prior warning. _engine._pipe's enable_model_cpu_offload() (see
+# _engine.py) shuttles individual submodules on/off GPU between denoising
+# steps via accelerate's device hooks -- it assumes exactly one inference
+# is running against the pipeline at a time. This endpoint spawns a new
+# background thread per request with no concurrency control at all, so two
+# overlapping /v1/video/image-to-video calls both drive the SAME shared
+# _pipe concurrently: one thread's offload hook can move a submodule's
+# weights back to CPU mid-forward-pass of the other thread, producing
+# exactly this device mismatch. A single generation-wide lock serializes
+# real GPU work through the pipeline -- correct given a single GPU can't
+# meaningfully parallelize heavy diffusion+offload work anyway, and this
+# pod's own callers (cs_fixed's cinematicPipeline.js) already submit SVD
+# jobs one scene at a time; this only protects against overlapping
+# requests from elsewhere (concurrent users, or two features hitting SVD
+# at once) that this server never guarded against.
+_generation_lock = threading.Lock()
+
+
 @app.get("/health")
 async def health():
     import torch
@@ -212,22 +232,31 @@ _JOB_DIR = tempfile.gettempdir()
 
 def _run_generation(job_id: str, image_bytes: bytes, motion_bucket_id: int, cfg_scale: float, seed: int, fps: int):
     t0 = time.time()
-    stopped_servers = _make_room()
-    try:
-        video_bytes = _engine.generate(
-            image_bytes, motion_bucket_id=motion_bucket_id, cfg_scale=cfg_scale, seed=seed, fps=fps,
-        )
-        path = os.path.join(_JOB_DIR, f"svd_{job_id}.mp4")
-        with open(path, "wb") as f:
-            f.write(video_bytes)
-        elapsed = round(time.time() - t0, 1)
-        logger.info(f"[SVD] Job {job_id} complete in {elapsed}s")
-        _jobs[job_id] = {"status": "complete", "video_path": path, "inference_seconds": elapsed}
-    except Exception as e:
-        logger.warning(f"[SVD] Job {job_id} failed: {e}", exc_info=True)
-        _jobs[job_id] = {"status": "failed", "error": str(e)}
-    finally:
-        _restart_aux_servers(stopped_servers)
+    queued_at = t0
+    # Held across eviction -> generation -> aux-server-restart, not just
+    # the generate() call, so a second request's own _make_room()/
+    # _restart_aux_servers() can't race the first request's (see the
+    # comment on _generation_lock above).
+    with _generation_lock:
+        wait_s = round(time.time() - queued_at, 1)
+        if wait_s > 1:
+            logger.info(f"[SVD] Job {job_id} waited {wait_s}s for the generation lock (another job was running)")
+        stopped_servers = _make_room()
+        try:
+            video_bytes = _engine.generate(
+                image_bytes, motion_bucket_id=motion_bucket_id, cfg_scale=cfg_scale, seed=seed, fps=fps,
+            )
+            path = os.path.join(_JOB_DIR, f"svd_{job_id}.mp4")
+            with open(path, "wb") as f:
+                f.write(video_bytes)
+            elapsed = round(time.time() - t0, 1)
+            logger.info(f"[SVD] Job {job_id} complete in {elapsed}s")
+            _jobs[job_id] = {"status": "complete", "video_path": path, "inference_seconds": elapsed}
+        except Exception as e:
+            logger.warning(f"[SVD] Job {job_id} failed: {e}", exc_info=True)
+            _jobs[job_id] = {"status": "failed", "error": str(e)}
+        finally:
+            _restart_aux_servers(stopped_servers)
 
 
 @app.post("/v1/video/image-to-video")
