@@ -24,13 +24,29 @@ set -e
 # .claude/plans/serene-floating-coral.md). pod1 needs no environment
 # change: it falls back to today's plain CLOUDFLARE_TUNNEL_TOKEN/hostnames
 # when POD_NAME is unset or literally "pod1".
+#
+# Real gap found live (2026-08-27): this used to hard-fail the ENTIRE
+# script (via bash's ${VAR:?msg}, under set -e) if the pod-specific
+# tunnel token wasn't set -- which a freshly recreated pod instance
+# never has, since only /workspace survives a pod recreation, not the
+# old instance's own shell environment. That meant a brand-new pod2
+# could never get ollama/the gateway/the ML server started at all over
+# one missing Cloudflare token, even though production's real AI
+# traffic doesn't route through these Cloudflare hostnames at all
+# (confirmed live: Render's CS_INFERENCE_URL_POD1/POD2 point directly at
+# RunPod's own *.proxy.runpod.net URLs). Downgraded to a warning: the
+# tunnel is skipped (see the guard near the bottom) rather than blocking
+# every other service on this pod.
 POD_NAME="${POD_NAME:-pod1}"
 if [ "$POD_NAME" = "pod1" ]; then
-  TUNNEL_TOKEN="$CLOUDFLARE_TUNNEL_TOKEN"
+  TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-}"
   LLM_HOST="llm.careerstudiomax.com"; VIDEO_HOST="video.careerstudiomax.com"; SVD_HOST="svd.careerstudiomax.com"
 else
-  TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN_POD2:?Set CLOUDFLARE_TUNNEL_TOKEN_POD2 for POD_NAME=$POD_NAME (see the second-pod Cloudflare Tunnel setup in DEPLOY_RUNPOD.md)}"
+  TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN_POD2:-}"
   LLM_HOST="llm2.careerstudiomax.com"; VIDEO_HOST="video2.careerstudiomax.com"; SVD_HOST="svd2.careerstudiomax.com"
+fi
+if [ -z "$TUNNEL_TOKEN" ]; then
+  echo "⚠️  No Cloudflare Tunnel token set for POD_NAME=$POD_NAME -- skipping the tunnel (ollama/gateway/ML server are unaffected; production doesn't route through it)."
 fi
 
 echo "=== 1. System packages ==="
@@ -177,9 +193,12 @@ sleep 3
 
 # CLOUDFLARE_TUNNEL_TOKEN (pod1) / CLOUDFLARE_TUNNEL_TOKEN_POD2 (pod2)
 # must be set in the shell environment before running this script — not
-# hardcoded here. TUNNEL_TOKEN resolved by POD_NAME above.
-nohup cloudflared tunnel run --token "$TUNNEL_TOKEN" > /tmp/cloudflared.log 2>&1 &
-disown
+# hardcoded here. TUNNEL_TOKEN resolved by POD_NAME above. Skipped
+# entirely (not just left to fail) when unset -- see the warning above.
+if [ -n "$TUNNEL_TOKEN" ]; then
+  nohup cloudflared tunnel run --token "$TUNNEL_TOKEN" > /tmp/cloudflared.log 2>&1 &
+  disown
+fi
 sleep 10
 
 echo "=== 7. Health check ==="
