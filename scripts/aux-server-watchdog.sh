@@ -36,7 +36,7 @@ _restart() {
       ( cd /workspace/careercamp-ai/_sadtalker_src && nohup ./venv/bin/python talkinghead_server.py >> /tmp/talkinghead.log 2>&1 & )
       ;;
     "svd_server.py")
-      ( cd /workspace/careercamp-ai/_svd_src && nohup ./venv/bin/python svd_server.py >> /tmp/svd.log 2>&1 & )
+      ( cd /workspace/careercamp-ai/_svd_src && PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True nohup ./venv/bin/python svd_server.py >> /tmp/svd.log 2>&1 & )
       ;;
     "tts_server.py")
       ( cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 nohup ./venv-tts/bin/python tts_server.py >> /tmp/tts_server.log 2>&1 & )

@@ -185,7 +185,17 @@ cd /workspace/careercamp-ai && COQUI_TOS_AGREED=1 nohup python3 api_server.py > 
 disown
 cd /workspace/careercamp-ai/_sadtalker_src && nohup ./venv/bin/python talkinghead_server.py > /tmp/talkinghead.log 2>&1 &
 disown
-cd /workspace/careercamp-ai/_svd_src && nohup ./venv/bin/python svd_server.py > /tmp/svd.log 2>&1 &
+# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (2026-08-27): live-
+# caught a genuine CUDA OOM on scene 7 of an 8-scene cinematic reel
+# (907MB free of 47.4GB total) with PyTorch's own error message
+# explicitly recommending this exact setting for fragmentation --
+# enable_model_cpu_offload() cycles submodules on/off GPU on every one of
+# SVD's many sequential generations within this one long-lived process,
+# and CUDA's default allocator doesn't always reclaim the resulting
+# fragmented free blocks efficiently across that many cycles. Expandable
+# segments let the allocator grow/shrink existing reservations instead of
+# always hunting for a new contiguous block, directly targeting this.
+cd /workspace/careercamp-ai/_svd_src && PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True nohup ./venv/bin/python svd_server.py > /tmp/svd.log 2>&1 &
 disown
 cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 nohup ./venv-tts/bin/python tts_server.py > /tmp/tts_server.log 2>&1 &
 disown
