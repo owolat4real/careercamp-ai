@@ -20,9 +20,18 @@ services:
       - key: CAREERCAMP_PORT
         value: "10000"
 
-      # Allow Groq/OpenRouter as LLM backend (Ollama not available on Render)
+      # Set back to "false" per explicit "internal model only, no external
+      # model" instruction (2026-08-26). Real consequence, stated plainly:
+      # Ollama is NOT available on Render's plain web-service tier, so if
+      # this specific service is genuinely the one serving production
+      # (rather than the RunPod GPU pod, which does run Ollama), it now has
+      # zero working LLM backend at all -- it will honestly degrade to the
+      # offline/unavailable response for every request instead of silently
+      # using Groq/OpenRouter. That's the correct internal-only behavior,
+      # not a bug, but it means this deployment target needs the real
+      # RunPod pod (or another genuinely internal host) to ever answer.
       - key: ALLOW_EXTERNAL_AI
-        value: "true"
+        value: "false"
 
       # Auth key — cs_fixed uses this to authenticate to this gateway
       # Set to same value as CAREERCAMP_API_KEY in your cs_fixed Render service
