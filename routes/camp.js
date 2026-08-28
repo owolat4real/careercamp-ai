@@ -260,10 +260,20 @@ function apiKeyGuard(req, res, next) {
 }
 
 /* ── LOCAL OLLAMA CALL ───────────────────────────────────────────── */
-async function callOllama(ollamaModel, messages, maxTokens, task, numCtx) {
+// wantsJson (2026-08-28 fix): live-caught "The AI engine returned an
+// unusable result for this request — please retry" on schema features
+// (e.g. resume_scorer/cv_score) -- this call never told Ollama the
+// response had to be JSON, relying only on a prompt-text instruction
+// (camp.js's jsonOverride). A reasoning-capable model would emit its
+// <think> block plus prose before the JSON, which campProxy.js's
+// _extractJSONText() couldn't always salvage. Ollama's own
+// response_format:json_object forces syntactically valid JSON at the
+// model-decoding level -- same fix already applied for CareerVision in
+// cs_fixed/middleware/brain.js's campInferJSON() earlier this session.
+async function callOllama(ollamaModel, messages, maxTokens, task, numCtx, wantsJson = false) {
   await gpuResidency.ensureResident(ollamaModel);
   const numGpu = await calculateOptimalGpuLayers(ollamaModel, numCtx || 8192);
-  const resp = await axios.post(`${OLLAMA_URL}/v1/chat/completions`, {
+  const body = {
     model:       ollamaModel,
     messages,
     max_tokens:  maxTokens,
@@ -275,7 +285,9 @@ async function callOllama(ollamaModel, messages, maxTokens, task, numCtx) {
     // should rarely fire, but 2048 (the smallest real ceiling, cs-haiku's)
     // is the only value that's never wrong if it ever does.
     options:     { num_gpu: numGpu, num_batch: 512, num_ctx: numCtx || 2048 },
-  }, { timeout: TIMEOUT, httpAgent });
+  };
+  if (wantsJson) body.response_format = { type: 'json_object' };
+  const resp = await axios.post(`${OLLAMA_URL}/v1/chat/completions`, body, { timeout: TIMEOUT, httpAgent });
 
   if (!resp.data?.choices?.[0]) throw new Error(`Ollama empty response for ${ollamaModel}`);
   return _CBP(resp.data.choices[0].message?.content || '');
@@ -285,16 +297,17 @@ async function callOllama(ollamaModel, messages, maxTokens, task, numCtx) {
 async function callWithRetry(feature, messages, numCtx) {
   const primaryModel = LOCAL_MODELS[feature.model] || feature.model;
   const sonnetModel  = LOCAL_MODELS['cs-sonnet'];
+  const wantsJson    = !!feature.schema;
 
   try {
-    const content = await callOllama(primaryModel, messages, feature.maxTokens, feature.task, numCtx);
+    const content = await callOllama(primaryModel, messages, feature.maxTokens, feature.task, numCtx, wantsJson);
 
     // Haiku leak guard — auto retry with sonnet
     if (feature.model === 'cs-haiku') {
       const leak = _DL(content);
       if (leak.leaked) {
         console.warn(`[CAMP] cs-haiku leaked (${leak.reason}) → retrying cs-sonnet`);
-        const retried = await callOllama(sonnetModel, messages, Math.max(feature.maxTokens, 800), feature.task, numCtx);
+        const retried = await callOllama(sonnetModel, messages, Math.max(feature.maxTokens, 800), feature.task, numCtx, wantsJson);
         return { content: retried, model: 'cs-sonnet', retriedFrom: 'cs-haiku' };
       }
     }
@@ -303,7 +316,7 @@ async function callWithRetry(feature, messages, numCtx) {
     console.warn(`[CAMP] ${feature.model} failed:`, primaryErr.message?.slice(0, 60));
     if (feature.model !== 'cs-sonnet') {
       try {
-        const fallback = await callOllama(sonnetModel, messages, Math.max(feature.maxTokens, 800), feature.task, numCtx);
+        const fallback = await callOllama(sonnetModel, messages, Math.max(feature.maxTokens, 800), feature.task, numCtx, wantsJson);
         return { content: fallback, model: 'cs-sonnet', retriedFrom: feature.model };
       } catch (sonnetErr) {
         console.warn('[CAMP] cs-sonnet also failed:', sonnetErr.message?.slice(0, 60));
@@ -490,7 +503,7 @@ async function* streamExternal(messages, maxTokens) {
 
 /* ── PROVIDER RACE — haiku-tier: fire Ollama + Groq simultaneously ── */
 async function callRace(feature, messages, numCtx) {
-  const haikuCall = callOllama(LOCAL_MODELS['cs-haiku'], messages, feature.maxTokens, feature.task, numCtx)
+  const haikuCall = callOllama(LOCAL_MODELS['cs-haiku'], messages, feature.maxTokens, feature.task, numCtx, !!feature.schema)
     .then(content => {
       const leak = _DL(content);
       if (leak.leaked) throw new Error('haiku leaked');
