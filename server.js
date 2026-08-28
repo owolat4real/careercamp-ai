@@ -44,6 +44,7 @@ const morgan     = require('morgan');
 const rateLimit  = require('express-rate-limit');
 const compression = require('compression');
 const http       = require('http');
+const axios      = require('axios');
 
 const app  = express();
 const PORT = process.env.PORT || process.env.CAREERCAMP_PORT || 3002;
@@ -146,7 +147,32 @@ function apiKeyAuth(req, res, next) {
 }
 
 // ── Health & status ────────────────────────────────────────
-app.get('/health', (req, res) => {
+// Real gap found live (2026-08-28): this response never reported SVD/
+// SadTalker at all -- they're separate processes on their own ports
+// (3005/3004), not Ollama models, so checking `engines.llm.ollamaModels`
+// here (the field this project actually looks at) gave no signal on
+// whether video generation was healthy, forcing a separate curl per pod
+// per port just to know. Real, same-machine checks (short 3s timeout so
+// a busy SVD generation in progress doesn't hang this response) added
+// alongside the existing engine statuses, not replacing them.
+async function _localVideoServiceHealth(port, name) {
+  try {
+    const r = await axios.get(`http://127.0.0.1:${port}/health`, { timeout: 3000 });
+    return { up: true, ...r.data };
+  } catch (e) {
+    return { up: false, service: name, error: e.code || e.message };
+  }
+}
+
+app.get('/health', async (req, res) => {
+  // Ports are hardcoded in svd_server.py/talkinghead_server.py themselves
+  // (uvicorn.run(..., port=3005/3004)) — not actually configurable via
+  // env var, so this matches that reality directly rather than implying
+  // a config knob that doesn't exist.
+  const [svd, talkinghead] = await Promise.all([
+    _localVideoServiceHealth(3005, 'svd-selfhosted'),
+    _localVideoServiceHealth(3004, 'talkinghead-sadtalker'),
+  ]);
   res.json({
     status:  'ok',
     service: 'CareerCamp AI Gateway',
@@ -159,6 +185,7 @@ app.get('/health', (req, res) => {
       vision:  careerVision.status(),
       voice:   careerVoice.status(),
       internet: internetEngine.status(),
+      video:   { svd, talkinghead },
     },
   });
 });
@@ -179,7 +206,6 @@ app.get('/health', (req, res) => {
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 app.post('/api/show', apiKeyAuth, async (req, res) => {
   try {
-    const axios = require('axios');
     const r = await axios.post(`${OLLAMA_URL}/api/show`, req.body, { timeout: 8000 });
     res.json(r.data);
   } catch (e) {
