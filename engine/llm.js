@@ -367,9 +367,11 @@ async function ollamaInfer(prompt, system, modelTag, opts = {}) {
   // that was genuinely on its way up as "unavailable" and cascading to
   // the offline fallback. Also now the ONLY pod (pod1 is gone), so
   // concurrent real traffic queues for the same GPU more than before.
-  // 45000ms covers a real cold load plus modest queueing headroom without
-  // letting a genuinely stuck request hang indefinitely.
-  }, { timeout: opts.timeout || 45000 });
+  // 35000ms covers a real cold load with margin, while staying safely
+  // under cs_fixed's services/camp-client.js's own 45000ms outer client
+  // timeout on this same call -- an earlier attempt at 45000ms here raced
+  // that outer timeout instead of giving it a real answer to relay.
+  }, { timeout: opts.timeout || 35000 });
   return _stripMarkdown(r.data?.message?.content || '');
 }
 
