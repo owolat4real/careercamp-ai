@@ -81,10 +81,10 @@ def _free_mib() -> int:
     return int(re.search(r"\d+", out).group())
 
 
-def _evict_ollama_for_startup():
+def _evict_ollama_if_low():
     if _free_mib() >= MIN_FREE_MIB_TARGET:
         return
-    logger.info(f"[TalkingHead] Only {_free_mib()}MiB free before model load — evicting Ollama models for headroom")
+    logger.info(f"[TalkingHead] Only {_free_mib()}MiB free — evicting Ollama models for headroom")
     for model in MODELS_TO_EVICT:
         try:
             requests.post(f"{OLLAMA_URL}/api/generate", json={"model": model, "prompt": "", "keep_alive": 0}, timeout=10)
@@ -97,7 +97,7 @@ def _evict_ollama_for_startup():
     logger.info(f"[TalkingHead] Free VRAM after eviction: {_free_mib()}MiB")
 
 
-_evict_ollama_for_startup()
+_evict_ollama_if_low()
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -211,6 +211,18 @@ async def talking_head(audio: UploadFile = File(...), persona_id: str = Form(def
     """
     t0 = time.time()
     image_path, source = _resolve_persona_image(persona_id)
+
+    # Live-caught (2026-08-28): a real cinematic reel (8 alternating
+    # presenter/B-roll scenes) OOM'd on the LAST scene across 3 full runs
+    # on a freshly-restarted, confirmed-clean pod -- not a leak (each run
+    # started from ~0 used) or a race (already fixed), but genuine VRAM
+    # creep over many sequential generations sharing one GPU with Ollama's
+    # resident models. _evict_ollama_if_low() only ran once at process
+    # startup before -- checking again before every real generation call
+    # (matching svd_server.py's own per-request _make_room()) gives real
+    # headroom back on later scenes instead of only ever having it on the
+    # first one.
+    _evict_ollama_if_low()
 
     tmp_audio = tempfile.NamedTemporaryFile(suffix=os.path.splitext(audio.filename or "audio.wav")[1] or ".wav", delete=False)
     try:
