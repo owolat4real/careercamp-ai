@@ -46,7 +46,14 @@ class EthicalGuardrails {
     /* RULE 3 — Mental health crisis */
     const CRISIS = [
       /\b(want to die|kill myself|end it all|no reason to live|suicidal)\b/i,
-      /\b(self harm|hurt myself|cutting)\b/i,
+      // Live-caught (2026-08-28): bare "cutting" alone matched routine CV/
+      // resume phrasing ("cutting p95 latency 40%", "cutting costs") --
+      // false-positive crisis redirects on completely normal career content,
+      // which then failed downstream JSON extraction for schema features
+      // (campProxy.js's _extractJSONText can't parse a prose redirect
+      // message), surfacing as "The AI engine returned an unusable result".
+      // Scoped to require actual self-harm context.
+      /\b(self[- ]harm|hurt myself|cutting (myself|my (skin|arm|arms|wrist|wrists|body)))\b/i,
     ];
     for (const re of CRISIS) {
       if (re.test(text)) {
