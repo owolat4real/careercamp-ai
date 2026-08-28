@@ -359,7 +359,17 @@ async function ollamaInfer(prompt, system, modelTag, opts = {}) {
       { role: 'system', content: system },
       { role: 'user',   content: prompt },
     ],
-  }, { timeout: opts.timeout || 15000 });
+  // Live-caught (2026-08-28): a real cold model load on this pod measured
+  // ~32s (Ollama loading a 2GB GGUF into VRAM the first time after a
+  // restart, or after keep_alive's 10m idle window lapses) -- the old
+  // 15000ms default killed the request via axios's client-side timeout
+  // before Ollama ever got the chance to finish, misreporting a model
+  // that was genuinely on its way up as "unavailable" and cascading to
+  // the offline fallback. Also now the ONLY pod (pod1 is gone), so
+  // concurrent real traffic queues for the same GPU more than before.
+  // 45000ms covers a real cold load plus modest queueing headroom without
+  // letting a genuinely stuck request hang indefinitely.
+  }, { timeout: opts.timeout || 45000 });
   return _stripMarkdown(r.data?.message?.content || '');
 }
 
