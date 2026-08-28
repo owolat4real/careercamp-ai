@@ -39,33 +39,36 @@ const { FEATURE_MAP } = require('../config/featureMap');
    bigger KV cache than the Modelfile's own deliberately-tuned ceiling
    (chosen specifically to leave headroom for cs-sonnet/haiku/opus/embed/
    vision/Chatterbox to coexist on the real, single 24GB A5000 card this
-   platform actually runs on — see Modelfile.cs-opus's own 2026-08-08
-   production-OOM correction). Aligned every tier down to the real,
-   currently-deployed ceiling. Real, honest consequence worth knowing:
-   careerlm-long's whole premise (131K ctx for long documents) is NOT
-   currently deliverable by the real deployed cs-sonnet model (real
-   ceiling 4K) -- the tier is kept (so long-document features still route
-   to cs-sonnet, still get whatever real headroom 4K gives vs nano/fast's
-   2K) but the number is now honest rather than a value that was never
-   actually achievable on this hardware. Closing that gap for real needs
-   either a genuinely bigger-context model or more VRAM, not a bigger
-   number in this file -- see the real GPU-capacity findings elsewhere. */
+   platform actually ran on at the time — see Modelfile.cs-opus's own
+   2026-08-08 production-OOM correction). Aligned every tier down to the
+   real, then-deployed ceiling.
+
+   RAISED 2026-08-28: the card since upgraded to a 48GB A40 (Modelfile.
+   cs-opus's 2026-08-23 note), and cs-opus's own real benchmark
+   (training/benchmark_context_window.js, run against the actual deployed
+   pod) measured FLAT tokens/sec from 8192 up to 65536 -- the old ceilings
+   were stale, not a hardware limit. careerlm-long's ctx now genuinely
+   exceeds careerlm-base's (16384 vs 8192, via the LONG_CTX_FEATURES ->
+   'careerlm-long' override below still resolving to cs-sonnet but a
+   bigger maxOut/window than short-task features get) -- the earlier
+   "same real ceiling as short tasks" caveat this comment used to carry no
+   longer applies. Re-run the benchmark against cs-sonnet/cs-haiku
+   directly (not just cs-opus) before pushing these further. */
 const TIER_CONFIG = {
-  'careerlm-nano': { ollamaModel: 'cs-haiku',  numCtx: 2048, maxOut:  512, gpuTier: 'haiku' },
-  'careerlm-fast': { ollamaModel: 'cs-haiku',  numCtx: 2048, maxOut: 1024, gpuTier: 'haiku' },
-  'careerlm-base': { ollamaModel: 'cs-sonnet', numCtx: 4096, maxOut: 4096, gpuTier: 'sonnet' },
-  'careerlm-long': { ollamaModel: 'cs-sonnet', numCtx: 4096, maxOut: 4096, gpuTier: 'sonnet' },
-  'careerlm-deep': { ollamaModel: 'cs-opus',   numCtx: 8192, maxOut: 4096, gpuTier: 'opus'   },
+  'careerlm-nano': { ollamaModel: 'cs-haiku',  numCtx: 8192,  maxOut:  512,  gpuTier: 'haiku' },
+  'careerlm-fast': { ollamaModel: 'cs-haiku',  numCtx: 8192,  maxOut: 2048,  gpuTier: 'haiku' },
+  'careerlm-base': { ollamaModel: 'cs-sonnet', numCtx: 8192,  maxOut: 4096,  gpuTier: 'sonnet' },
+  'careerlm-long': { ollamaModel: 'cs-sonnet', numCtx: 16384, maxOut: 4096,  gpuTier: 'sonnet' },
+  'careerlm-deep': { ollamaModel: 'cs-opus',   numCtx: 65536, maxOut: 8192,  gpuTier: 'opus'   },
 };
 
 /* ── LONG-CONTEXT OVERRIDES ──────────────────────────────────────────────
    Features that consume long input documents — classified as careerlm-long
-   even though their underlying model is cs-sonnet. Real, current caveat:
-   both careerlm-base and careerlm-long now share the same real 4096
-   numCtx ceiling (see the honest note on TIER_CONFIG above) -- the real
-   benefit these features still get from this classification is a
-   dedicated maxOut budget and gpuTier accounting, not a bigger real
-   context window, until the model/hardware question above is resolved.   */
+   even though their underlying model is cs-sonnet. Since the 2026-08-28
+   raise (see TIER_CONFIG above), careerlm-long genuinely gets a bigger
+   real numCtx than careerlm-base (16384 vs 8192, both cs-sonnet) — the
+   "same ceiling either way" caveat this comment used to carry no longer
+   applies.                                                                */
 const LONG_CTX_FEATURES = new Set([
   'document_analyser',       // reads arbitrary uploaded documents
   'contract_explainer',      // legal contracts — can be 10k-50k tokens

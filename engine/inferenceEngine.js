@@ -46,12 +46,15 @@ const OLLAMA_TIMEOUT = 45000;
 // Real, live-caught bug (2026-08-11): contextWindow here didn't match
 // the real deployed Modelfile ceilings either -- same root cause and
 // same fix as engine/featureModelMap.js's TIER_CONFIG (see that file's
-// comment for the full real explanation). Aligned down to the real,
-// currently-deployed num_ctx: cs-sonnet 4096, cs-haiku 2048.
+// comment for the full real explanation).
+// RAISED 2026-08-28 to match the same-day Modelfile/TIER_CONFIG raise
+// (see models/Modelfile.cs-sonnet/-haiku and featureModelMap.js's
+// TIER_CONFIG for the real benchmark evidence behind these numbers --
+// the GPU upgrade to a 48GB A40 made the earlier, lower ceilings stale).
 const MODELS = {
-  'cs-sonnet':     { ollamaName: 'cs-sonnet',     maxTokens: 4096, contextWindow: 4096, tier: 'quality' },
-  'cs-haiku':      { ollamaName: 'cs-haiku',      maxTokens: 1024, contextWindow: 2048, tier: 'fast'    },
-  'careerlm-nano': { ollamaName: 'cs-haiku',      maxTokens: 512,  contextWindow: 2048, tier: 'nano'    },
+  'cs-sonnet':     { ollamaName: 'cs-sonnet',     maxTokens: 4096, contextWindow: 16384, tier: 'quality' },
+  'cs-haiku':      { ollamaName: 'cs-haiku',      maxTokens: 2048, contextWindow: 8192,  tier: 'fast'    },
+  'careerlm-nano': { ollamaName: 'cs-haiku',      maxTokens: 512,  contextWindow: 8192,  tier: 'nano'    },
 };
 
 /* ── TASK → MODEL MAP ──────────────────────────────────────────── */

@@ -48,7 +48,16 @@ FROM aya-expanse:32b
 # only proves the benchmark script itself works end-to-end. Re-run it
 # for real once `ollama pull aya-expanse:32b` has actually happened on
 # the real inference host, and let ITS numbers pick this value.
-PARAMETER num_ctx 8192
+# RAISED 2026-08-28, real benchmark (training/benchmark_context_window.js,
+# run against this exact deployed pod/model -- 32.3B command-r family,
+# confirmed via /api/show, not assumed): tokens/sec stayed FLAT (20.2-20.3)
+# across every successful candidate from 8192 up to 65536 -- zero real
+# degradation. (num_ctx=4096 itself timed out on the very first, cold-model
+# request; not a sign 4096 is somehow worse than the larger sizes that
+# immediately followed once warm.) 65536 is the script's own recommendation
+# and exactly half Aya Expanse's real 128K ceiling, so real headroom remains
+# for a future push. See that script's printed table for the raw numbers.
+PARAMETER num_ctx 65536
 PARAMETER num_batch 256
 # UPDATED (2026-08-23, real GPU upgrade — A5000 24GB -> A40 48GB): the
 # partial-offload constraint above was specific to the OLD 24GB card and
@@ -67,4 +76,4 @@ PARAMETER num_batch 256
 # assuming this still holds, same discipline as the original comment.
 PARAMETER num_gpu 99
 PARAMETER temperature 0.72
-PARAMETER num_predict 4096
+PARAMETER num_predict 8192

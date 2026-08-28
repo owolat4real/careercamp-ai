@@ -1,11 +1,14 @@
 FROM cs-haiku
-# Context window — 0.6B handles 2048 well
-# (With LifePath's 21-mode block now conditional in brain.js, a normal
-# request's shared prompt runs ~3,464 tokens instead of ~4,700. 4608 gives a
-# small real output margin without the earlier 8192+ regression — response
-# time is dominated by prompt-processing cost on this hardware regardless of
-# exact ctx size in this range, so a modest bump is the right tradeoff.)
-PARAMETER num_ctx 4608
+# Context window — raised 2026-08-28 after the GPU upgrade (single 24GB
+# A5000 -> 48GB A40, see Modelfile.cs-opus's 2026-08-23 note) made the
+# earlier "8192+ regression" ceiling stale -- that was measured on the old,
+# RAM-constrained CPU-serving hardware, not this card. cs-opus's own real
+# benchmark (training/benchmark_context_window.js) measured FLAT throughput
+# from 8192 up to 65536 on this pod with zero degradation; cs-haiku is a
+# far smaller/faster model than cs-opus, so 8192 carries real margin with
+# no real risk. Re-run that benchmark against cs-haiku directly before
+# pushing this further.
+PARAMETER num_ctx 8192
 # Batch size for prompt processing — larger = faster prefill
 PARAMETER num_batch 512
 # Use all GPU layers — 0.6B fits entirely in 4GB VRAM
@@ -16,7 +19,7 @@ PARAMETER temperature 0.65
 PARAMETER top_p 0.85
 # Repeat penalty — prevents loops in small models
 PARAMETER repeat_penalty 1.15
-PARAMETER num_predict 1024
+PARAMETER num_predict 2048
 # Stop tokens
 PARAMETER stop "```"
 PARAMETER stop "<|end|>"
