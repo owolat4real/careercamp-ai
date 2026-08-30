@@ -167,8 +167,19 @@ sleep 2
 # path) would have silently reverted that day's live capacity fix. Synced
 # to match. OLLAMA_MAX_LOADED_MODELS=4 was also live-fixed today (was 2,
 # see /root/start_ollama.sh's own history) -- already correct here, kept.
+#
+# Real fix (2026-08-30): OLLAMA_KEEP_ALIVE=-1 pins every loaded model
+# (including cs-opus, ~22GB) in VRAM forever. Live-caught: this pod also
+# now runs svd_server.py (~10GB resident) and tts_server.py (~12GB
+# resident) at the same time, and with cs-opus never evicting the three
+# together left the 48GB card at 44.8GB/49.1GB used AT REST -- not
+# enough headroom for SVD to actually run inference, causing real,
+# live avatar-video generation failures under normal (non-peak) load.
+# Bounded to 10m: frees ~22GB after 10 minutes of no LLM calls, at the
+# cost of a cold-start reload on the next call after an idle gap --a
+# real, accepted trade-off, not a free fix.
 OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PARALLEL=4 \
-  OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
+  OLLAMA_KEEP_ALIVE=10m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
   nohup ollama serve > /tmp/ollama.log 2>&1 &
 disown
 sleep 5

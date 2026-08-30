@@ -68,9 +68,11 @@ _restart() {
       # Exact env vars must match start-all-with-recovery.sh's own
       # invocation -- a watchdog-restarted ollama with a different
       # OLLAMA_MAX_LOADED_MODELS/OLLAMA_KV_CACHE_TYPE would silently
-      # regress capacity/quality vs. a script-started one.
+      # regress capacity/quality vs. a script-started one. OLLAMA_KEEP_ALIVE
+      # bounded to 10m as of 2026-08-30 -- see start-all-with-recovery.sh's
+      # own comment on this same line for the real VRAM-saturation reason.
       ( OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PARALLEL=4 \
-        OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
+        OLLAMA_KEEP_ALIVE=10m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
         nohup ollama serve >> /tmp/ollama.log 2>&1 & )
       ;;
   esac
