@@ -17,11 +17,31 @@
 # touching nothing about how the container itself boots -- if it dies,
 # worst case is back to today's baseline (no supervision), never worse.
 #
-# Deliberately scoped to the 4 aux Python servers that follow this exact
-# fragile "bare nohup, no restart-on-crash" pattern -- NOT node
-# server.js or ollama serve, which are started differently in
-# start-all-with-recovery.sh and a real gateway/LLM crash deserves more
-# visible, immediate attention than a silent auto-restart would give it.
+# Scoped to the 4 aux Python servers that follow this exact fragile
+# "bare nohup, no restart-on-crash" pattern, PLUS ollama serve (added
+# 2026-08-30 -- see below) -- still NOT node server.js, which is a
+# different failure class (an auth/session-bearing Node crash deserves
+# a human looking at deploy logs, not a blind restart-loop that could
+# mask a real regression under it).
+#
+# Real gap in the ORIGINAL scoping decision, found while completing this
+# session's infra audit (2026-08-30): `ollama serve` was grouped with
+# node server.js under "deserves more visible attention than a silent
+# auto-restart" -- but ollama backs cs-haiku/cs-sonnet/cs-opus, i.e. it
+# IS the self-hosted AI engine behind CSTM-2's careerlm, CAMP's chat,
+# and Transformer's fallback path. Losing it silently for the "over an
+# hour, completely unnoticed" duration this watchdog was built to
+# prevent for talkinghead_server.py is a materially worse outage than
+# any of the 4 processes already covered -- the exact incident class
+# this script exists to close, just not yet applied to the single most
+# critical process on the pod. "Visible attention" is still real here:
+# every restart below is a loudly logged, greppable line in
+# /tmp/watchdog.log (unlike a silent process death), and the app-side
+# health-check cycle (services/csModelGateway.js, pings every 120s)
+# independently surfaces a cold/unhealthy tier on the status page
+# regardless of this watchdog -- so this doesn't remove visibility, it
+# adds a fast local recovery on top of the visibility that already
+# exists.
 #
 # Usage: nohup ./aux-server-watchdog.sh > /tmp/watchdog.log 2>&1 &
 set -u
@@ -44,10 +64,19 @@ _restart() {
     "python3 api_server.py")
       ( cd /workspace/careercamp-ai && COQUI_TOS_AGREED=1 nohup python3 api_server.py >> /tmp/mlserver.log 2>&1 & )
       ;;
+    "ollama serve")
+      # Exact env vars must match start-all-with-recovery.sh's own
+      # invocation -- a watchdog-restarted ollama with a different
+      # OLLAMA_MAX_LOADED_MODELS/OLLAMA_KV_CACHE_TYPE would silently
+      # regress capacity/quality vs. a script-started one.
+      ( OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PARALLEL=4 \
+        OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
+        nohup ollama serve >> /tmp/ollama.log 2>&1 & )
+      ;;
   esac
 }
 
-PATTERNS=("talkinghead_server.py" "svd_server.py" "tts_server.py" "python3 api_server.py")
+PATTERNS=("talkinghead_server.py" "svd_server.py" "tts_server.py" "python3 api_server.py" "ollama serve")
 
 echo "[watchdog] $(date -u +%FT%TZ) started, checking every ${CHECK_INTERVAL_S}s: ${PATTERNS[*]}"
 
