@@ -19,10 +19,7 @@
 #
 # Scoped to the 4 aux Python servers that follow this exact fragile
 # "bare nohup, no restart-on-crash" pattern, PLUS ollama serve (added
-# 2026-08-30 -- see below) -- still NOT node server.js, which is a
-# different failure class (an auth/session-bearing Node crash deserves
-# a human looking at deploy logs, not a blind restart-loop that could
-# mask a real regression under it).
+# 2026-08-30 -- see below).
 #
 # Real gap in the ORIGINAL scoping decision, found while completing this
 # session's infra audit (2026-08-30): `ollama serve` was grouped with
@@ -43,9 +40,29 @@
 # adds a fast local recovery on top of the visibility that already
 # exists.
 #
+# `node server.js` added 2026-08-30, same day: it genuinely crashed for
+# real (listener died, process left as a zombie) and sat completely dead
+# for an unknown duration until a human happened to notice mid-unrelated
+# debugging -- exactly the incident class this script exists to close,
+# and the original "a human should look at this" reasoning didn't
+# actually get a human to look at it any faster than the other 4
+# processes' silent deaths did before THIS script existed. Given a
+# RESTART_LIMIT below (unlike the other 5 patterns, which restart
+# unconditionally) specifically because this one IS a different failure
+# class -- an auth/session-bearing crash-loop from a real code
+# regression must still surface as "stopped trying, needs a human" rather
+# than restart forever and paper over it. Restarts with >> (append), never
+# > (overwrite) -- a real lesson from THIS SAME incident: the first
+# manual recovery truncated /tmp/gateway.log, permanently losing whatever
+# crash evidence would have explained the original root cause.
+#
 # Usage: nohup ./aux-server-watchdog.sh > /tmp/watchdog.log 2>&1 &
 set -u
 CHECK_INTERVAL_S=60
+NODE_GATEWAY_RESTART_LIMIT=3
+NODE_GATEWAY_RESTART_WINDOW_S=3600
+_node_gateway_restart_count=0
+_node_gateway_window_start=$(date +%s)
 
 # pattern -> restart command (must exactly match start-all-with-recovery.sh's
 # own invocation of each, so a watchdog-restarted process is byte-identical
@@ -75,17 +92,34 @@ _restart() {
         OLLAMA_KEEP_ALIVE=10m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
         nohup ollama serve >> /tmp/ollama.log 2>&1 & )
       ;;
+    "node server.js")
+      ( cd /workspace/careercamp-ai && TTS_SERVER_URL=http://localhost:3006 nohup node server.js >> /tmp/gateway.log 2>&1 & )
+      ;;
   esac
 }
 
-PATTERNS=("talkinghead_server.py" "svd_server.py" "tts_server.py" "python3 api_server.py" "ollama serve")
+PATTERNS=("talkinghead_server.py" "svd_server.py" "tts_server.py" "python3 api_server.py" "ollama serve" "node server.js")
 
 echo "[watchdog] $(date -u +%FT%TZ) started, checking every ${CHECK_INTERVAL_S}s: ${PATTERNS[*]}"
 
 while true; do
   for pattern in "${PATTERNS[@]}"; do
     if ! pgrep -f "$pattern" > /dev/null 2>&1; then
-      echo "[watchdog] $(date -u +%FT%TZ) '$pattern' is DOWN -- restarting"
+      if [ "$pattern" = "node server.js" ]; then
+        now=$(date +%s)
+        if (( now - _node_gateway_window_start > NODE_GATEWAY_RESTART_WINDOW_S )); then
+          _node_gateway_restart_count=0
+          _node_gateway_window_start=$now
+        fi
+        if (( _node_gateway_restart_count >= NODE_GATEWAY_RESTART_LIMIT )); then
+          echo "[watchdog] $(date -u +%FT%TZ) 'node server.js' is DOWN but already restarted ${NODE_GATEWAY_RESTART_LIMIT}x in the last hour -- NOT restarting again, this looks like a real crash-loop that needs a human, not another auto-restart"
+          continue
+        fi
+        _node_gateway_restart_count=$((_node_gateway_restart_count + 1))
+        echo "[watchdog] $(date -u +%FT%TZ) 'node server.js' is DOWN -- restarting (attempt ${_node_gateway_restart_count}/${NODE_GATEWAY_RESTART_LIMIT} this hour)"
+      else
+        echo "[watchdog] $(date -u +%FT%TZ) '$pattern' is DOWN -- restarting"
+      fi
       _restart "$pattern"
       sleep 5
     fi
