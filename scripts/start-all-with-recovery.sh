@@ -38,6 +38,21 @@ set -e
 # tunnel is skipped (see the guard near the bottom) rather than blocking
 # every other service on this pod.
 POD_NAME="${POD_NAME:-pod1}"
+
+# Persistent log dir -- 2026-08-31 fix. /tmp (and everywhere else outside
+# /workspace) does not survive a container restart, so a crash immediately
+# followed by RunPod recreating the container wiped every service log,
+# including whatever would have explained the crash. /workspace does
+# survive, so logs now live there. Each boot rotates the previous run's
+# log to .previous (one generation kept) rather than silently overwriting
+# it, so the log from right before a restart is never just gone.
+LOG_DIR="/workspace/logs"
+mkdir -p "$LOG_DIR"
+_rotate_log() {
+  local f="$LOG_DIR/$1.log"
+  [ -s "$f" ] && mv "$f" "$LOG_DIR/$1.log.previous"
+  return 0
+}
 if [ "$POD_NAME" = "pod1" ]; then
   TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-}"
   LLM_HOST="llm.careerstudiomax.com"; VIDEO_HOST="video.careerstudiomax.com"; SVD_HOST="svd.careerstudiomax.com"
@@ -178,9 +193,10 @@ sleep 2
 # Bounded to 10m: frees ~22GB after 10 minutes of no LLM calls, at the
 # cost of a cold-start reload on the next call after an idle gap --a
 # real, accepted trade-off, not a free fix.
+_rotate_log ollama
 OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PARALLEL=4 \
   OLLAMA_KEEP_ALIVE=10m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
-  nohup ollama serve > /tmp/ollama.log 2>&1 &
+  nohup ollama serve >> "$LOG_DIR/ollama.log" 2>&1 &
 disown
 sleep 5
 
@@ -190,11 +206,14 @@ sleep 5
 # but that was never actually reconciled against talkinghead's real
 # claim on it, confirmed live 2026-08-24). engine/voice.js needs this
 # env var so it targets the real port instead of the wrong default.
-cd /workspace/careercamp-ai && TTS_SERVER_URL=http://localhost:3006 nohup node server.js > /tmp/gateway.log 2>&1 &
+_rotate_log gateway
+cd /workspace/careercamp-ai && TTS_SERVER_URL=http://localhost:3006 nohup node server.js >> "$LOG_DIR/gateway.log" 2>&1 &
 disown
-cd /workspace/careercamp-ai && COQUI_TOS_AGREED=1 nohup python3 api_server.py > /tmp/mlserver.log 2>&1 &
+_rotate_log mlserver
+cd /workspace/careercamp-ai && COQUI_TOS_AGREED=1 nohup python3 api_server.py >> "$LOG_DIR/mlserver.log" 2>&1 &
 disown
-cd /workspace/careercamp-ai/_sadtalker_src && nohup ./venv/bin/python talkinghead_server.py > /tmp/talkinghead.log 2>&1 &
+_rotate_log talkinghead
+cd /workspace/careercamp-ai/_sadtalker_src && nohup ./venv/bin/python talkinghead_server.py >> "$LOG_DIR/talkinghead.log" 2>&1 &
 disown
 # PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (2026-08-27): live-
 # caught a genuine CUDA OOM on scene 7 of an 8-scene cinematic reel
@@ -206,9 +225,11 @@ disown
 # fragmented free blocks efficiently across that many cycles. Expandable
 # segments let the allocator grow/shrink existing reservations instead of
 # always hunting for a new contiguous block, directly targeting this.
-cd /workspace/careercamp-ai/_svd_src && PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True nohup ./venv/bin/python svd_server.py > /tmp/svd.log 2>&1 &
+_rotate_log svd
+cd /workspace/careercamp-ai/_svd_src && PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True nohup ./venv/bin/python svd_server.py >> "$LOG_DIR/svd.log" 2>&1 &
 disown
-cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 nohup ./venv-tts/bin/python tts_server.py > /tmp/tts_server.log 2>&1 &
+_rotate_log tts_server
+cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 nohup ./venv-tts/bin/python tts_server.py >> "$LOG_DIR/tts_server.log" 2>&1 &
 disown
 sleep 3
 
@@ -218,7 +239,8 @@ sleep 3
 # supervision. This plain polling watchdog fixes that going forward
 # without changing how the container itself boots (see the script's own
 # header for why that specific approach is deliberately avoided here).
-cd /workspace/careercamp-ai/scripts && chmod +x aux-server-watchdog.sh && nohup ./aux-server-watchdog.sh > /tmp/watchdog.log 2>&1 &
+_rotate_log watchdog
+cd /workspace/careercamp-ai/scripts && chmod +x aux-server-watchdog.sh && nohup ./aux-server-watchdog.sh >> "$LOG_DIR/watchdog.log" 2>&1 &
 disown
 sleep 1
 
@@ -227,7 +249,8 @@ sleep 1
 # hardcoded here. TUNNEL_TOKEN resolved by POD_NAME above. Skipped
 # entirely (not just left to fail) when unset -- see the warning above.
 if [ -n "$TUNNEL_TOKEN" ]; then
-  nohup cloudflared tunnel run --token "$TUNNEL_TOKEN" > /tmp/cloudflared.log 2>&1 &
+_rotate_log cloudflared
+  nohup cloudflared tunnel run --token "$TUNNEL_TOKEN" >> "$LOG_DIR/cloudflared.log" 2>&1 &
   disown
 fi
 sleep 10

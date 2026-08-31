@@ -56,7 +56,7 @@
 # manual recovery truncated /tmp/gateway.log, permanently losing whatever
 # crash evidence would have explained the original root cause.
 #
-# Usage: nohup ./aux-server-watchdog.sh > /tmp/watchdog.log 2>&1 &
+# Usage: nohup ./aux-server-watchdog.sh >> /workspace/logs/watchdog.log 2>&1 &
 set -u
 CHECK_INTERVAL_S=60
 NODE_GATEWAY_RESTART_LIMIT=3
@@ -70,16 +70,16 @@ _node_gateway_window_start=$(date +%s)
 _restart() {
   case "$1" in
     "talkinghead_server.py")
-      ( cd /workspace/careercamp-ai/_sadtalker_src && nohup ./venv/bin/python talkinghead_server.py >> /tmp/talkinghead.log 2>&1 & )
+      ( cd /workspace/careercamp-ai/_sadtalker_src && nohup ./venv/bin/python talkinghead_server.py >> /workspace/logs/talkinghead.log 2>&1 & )
       ;;
     "svd_server.py")
-      ( cd /workspace/careercamp-ai/_svd_src && PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True nohup ./venv/bin/python svd_server.py >> /tmp/svd.log 2>&1 & )
+      ( cd /workspace/careercamp-ai/_svd_src && PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True nohup ./venv/bin/python svd_server.py >> /workspace/logs/svd.log 2>&1 & )
       ;;
     "tts_server.py")
-      ( cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 nohup ./venv-tts/bin/python tts_server.py >> /tmp/tts_server.log 2>&1 & )
+      ( cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 nohup ./venv-tts/bin/python tts_server.py >> /workspace/logs/tts_server.log 2>&1 & )
       ;;
     "python3 api_server.py")
-      ( cd /workspace/careercamp-ai && COQUI_TOS_AGREED=1 nohup python3 api_server.py >> /tmp/mlserver.log 2>&1 & )
+      ( cd /workspace/careercamp-ai && COQUI_TOS_AGREED=1 nohup python3 api_server.py >> /workspace/logs/mlserver.log 2>&1 & )
       ;;
     "ollama serve")
       # Exact env vars must match start-all-with-recovery.sh's own
@@ -90,10 +90,10 @@ _restart() {
       # own comment on this same line for the real VRAM-saturation reason.
       ( OLLAMA_MODELS=/workspace/ollama-models OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PARALLEL=4 \
         OLLAMA_KEEP_ALIVE=10m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_QUEUE=512 \
-        nohup ollama serve >> /tmp/ollama.log 2>&1 & )
+        nohup ollama serve >> /workspace/logs/ollama.log 2>&1 & )
       ;;
     "node server.js")
-      ( cd /workspace/careercamp-ai && TTS_SERVER_URL=http://localhost:3006 nohup node server.js >> /tmp/gateway.log 2>&1 & )
+      ( cd /workspace/careercamp-ai && TTS_SERVER_URL=http://localhost:3006 nohup node server.js >> /workspace/logs/gateway.log 2>&1 & )
       ;;
   esac
 }
