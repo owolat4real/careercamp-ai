@@ -40,7 +40,15 @@ S3_KEY="model-backups/cs-custom-models-${DATE_TAG}.tar.gz"
 
 echo "==> Staging manifests + deduplicated blobs for: ${MODELS[*]}"
 rm -rf "$STAGE_DIR"
-node -e "
+# Real, live-caught bug (2026-09-02): these KEY=value assignments were
+# placed AFTER `node -e "..."` -- in bash that only sets env vars for a
+# command when they come BEFORE it; placed after, they're just extra
+# positional args to `node`, so process.env.OLLAMA_DIR/STAGE_DIR/MODELS
+# were always undefined and this failed immediately on
+# `process.env.MODELS.split(' ')`. This script had apparently never
+# actually succeeded via this exact invocation -- the one real backup in
+# S3 (2026-08-25) predates this code path or was run some other way.
+OLLAMA_DIR="$OLLAMA_DIR" STAGE_DIR="$STAGE_DIR" MODELS="${MODELS[*]}" node -e "
 const fs = require('fs');
 const path = require('path');
 const ollamaDir = process.env.OLLAMA_DIR;
@@ -62,7 +70,7 @@ for (const digest of blobDigests) {
   fs.copyFileSync(path.join(ollamaDir, 'blobs', name), path.join(stageDir, 'blobs', name));
 }
 console.log('    ' + blobDigests.size + ' unique blobs staged.');
-" OLLAMA_DIR="$OLLAMA_DIR" STAGE_DIR="$STAGE_DIR" MODELS="${MODELS[*]}"
+"
 
 echo "==> Compressing..."
 tar -czf "$TARBALL" -C "$STAGE_DIR" .
@@ -72,7 +80,11 @@ echo "==> Verifying tarball integrity before upload..."
 tar -tzf "$TARBALL" > /dev/null
 
 echo "==> Uploading to s3://${AWS_S3_BUCKET}/${S3_KEY}..."
-node -e "
+# Same class of bug as the staging step above -- TARBALL/S3_KEY are plain
+# (non-exported) shell variables, so process.env.TARBALL/S3_KEY were
+# always undefined here too. AWS_* happened to work only because the
+# caller is expected to `export` those before running this script.
+TARBALL="$TARBALL" S3_KEY="$S3_KEY" node -e "
 require('@aws-sdk/client-s3');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const fs = require('fs');
