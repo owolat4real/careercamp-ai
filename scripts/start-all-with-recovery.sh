@@ -244,6 +244,17 @@ cd /workspace/careercamp-ai/scripts && chmod +x aux-server-watchdog.sh && nohup 
 disown
 sleep 1
 
+# Real gap found live (2026-09-02): backupCustomModels.sh (the only real
+# off-pod backup for cs-haiku/cs-sonnet/cs-embed -- cs-opus is a public
+# retag, doesn't need this) existed but had never actually succeeded (two
+# separate bugs), so the one backup in S3 was 8 days stale by the time
+# anyone checked. This starts a daily loop so a fresh backup exists
+# without anyone needing to remember to SSH in and run it.
+_rotate_log model-backup-loop
+cd /workspace/careercamp-ai/scripts && chmod +x dailyModelBackupLoop.sh && nohup ./dailyModelBackupLoop.sh >> "$LOG_DIR/model-backup-loop.log" 2>&1 &
+disown
+sleep 1
+
 # CLOUDFLARE_TUNNEL_TOKEN (pod1) / CLOUDFLARE_TUNNEL_TOKEN_POD2 (pod2)
 # must be set in the shell environment before running this script — not
 # hardcoded here. TUNNEL_TOKEN resolved by POD_NAME above. Skipped
