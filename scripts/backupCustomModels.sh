@@ -80,21 +80,19 @@ echo "==> Verifying tarball integrity before upload..."
 tar -tzf "$TARBALL" > /dev/null
 
 echo "==> Uploading to s3://${AWS_S3_BUCKET}/${S3_KEY}..."
-# Same class of bug as the staging step above -- TARBALL/S3_KEY are plain
-# (non-exported) shell variables, so process.env.TARBALL/S3_KEY were
-# always undefined here too. AWS_* happened to work only because the
-# caller is expected to `export` those before running this script.
-TARBALL="$TARBALL" S3_KEY="$S3_KEY" node -e "
-require('@aws-sdk/client-s3');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-const fs = require('fs');
-const s3 = new S3Client({ region: process.env.AWS_REGION, credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY } });
-const size = fs.statSync(process.env.TARBALL).size;
-(async () => {
-  await s3.send(new PutObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: process.env.S3_KEY, Body: fs.createReadStream(process.env.TARBALL), ContentLength: size }));
-  console.log('    Uploaded ' + (size/1e9).toFixed(2) + 'GB.');
-})().catch(e => { console.error('Upload failed:', e.message); process.exit(1); });
-" 2>&1 || { echo "!! S3 upload failed — leaving local tarball at $TARBALL for manual retry."; exit 1; }
+# Switched to the `aws` CLI (2026-09-02) -- the @aws-sdk/client-s3 Node
+# package this used to require() is NOT installed anywhere on this pod
+# (confirmed live: MODULE_NOT_FOUND, no node_modules for it in
+# /workspace/careercamp-ai or anywhere else), so the upload step had
+# never actually succeeded either, independent of the env-var bug fixed
+# above. `aws` CLI v1 IS already present on this pod's base image and
+# needs no install -- a smaller dependency footprint for a script whose
+# whole point is disaster recovery (it should work even when the rest of
+# this repo's node_modules is in a bad state).
+AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" AWS_DEFAULT_REGION="$AWS_REGION" \
+  aws s3 cp "$TARBALL" "s3://${AWS_S3_BUCKET}/${S3_KEY}" \
+  || { echo "!! S3 upload failed — leaving local tarball at $TARBALL for manual retry."; exit 1; }
+echo "    Uploaded $(du -h "$TARBALL" | cut -f1)."
 
 echo "==> Cleaning up local staging..."
 rm -rf "$STAGE_DIR" "$TARBALL"
