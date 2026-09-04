@@ -24,6 +24,7 @@ const { scoreWithProxy }                  = require('../core/scoringProxy');
 const { PIIScrubber: _PII }               = require('../engine/piiScrubber');
 const { MemorySaver: _MEM }               = require('../engine/memorySaver');
 const { EthicalGuardrails: _GUARD }       = require('../engine/guardrails');
+const { logGenericityIfFlagged: _logGenericity } = require('../engine/genericityFirewall');
 const { requiresReasoning: _RR, buildReasoningPrompt: _BRP, detectAmbiguity: _DA } = require('../engine/reasoningEngine');
 const { detectLeak: _DL, cleanBannedPhrases: _CBP, StreamingLeakGuard: _SLG }      = require('../engine/haikuGuard');
 const { runSalaryBenchmark, SALARY_CALL_OVERRIDES }                                 = require('../engine/features/salaryBenchmark');
@@ -853,6 +854,17 @@ router.post('/:featureId', apiKeyGuard, async (req, res) => {
   } else {
     result.content = outCheck.output;
   }
+
+  // Real gap closed (2026-09-04): the ethics check above screens for
+  // discrimination/fraud/crisis/etc., a materially different thing from
+  // genericity/fabrication -- this is the single choke point for every
+  // /v1/camp/:featureId response (the endpoint api-platform's
+  // campProxy.js calls for every external developer request), so hooking
+  // it once here gives real coverage across every feature this service
+  // serves. Observational only (logs, never blocks/retries/alters the
+  // response) -- matches the design of every other genericityFirewall
+  // integration this session, see engine/genericityFirewall.js's header.
+  _logGenericity(result.content, `camp:${featureId}`);
 
   /* STEP 8 — PII restore */
   if (feature.piiScrub && Object.keys(piiMap).length) {
