@@ -330,7 +330,7 @@ app.use((err, req, res, _next) => {
 // ── Boot ───────────────────────────────────────────────────
 async function boot() {
   console.log('\n╔══════════════════════════════════════════════════════╗');
-  console.log('║  CareerCamp AI — World-First Career Intelligence     ║');
+  console.log('║  CareerCamp AI — Unique Career Intelligence          ║');
   console.log('║  LLM · VLM · Voice · BERT · Multimodal · Internet   ║');
   console.log('╚══════════════════════════════════════════════════════╝\n');
 
