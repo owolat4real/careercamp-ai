@@ -20,14 +20,29 @@ class ResponseCache {
     this.ttl     = ttl
   }
 
-  /* Normalise text and build a stable hash key */
+  /* Normalise text and build a stable hash key.
+   * Real, live-caught bug (2026-09-05): this used to .slice(0, 500) the
+   * normalised text BEFORE hashing. Several features (resume_auto_optimiser,
+   * cover_letter_*, interview_engine_1, job_match_scorer...) send a long
+   * fixed instructional preamble ahead of the actual per-user content (a
+   * CV, job description, etc). Once that preamble alone exceeds 500
+   * normalised characters, the truncated slice is IDENTICAL for every
+   * request regardless of the real CV/JD content that follows it -- so
+   * two completely different users' requests hashed to the same cache
+   * key and one user's real cached output (potentially containing another
+   * candidate's actual CV content) was served back as the response to a
+   * totally different request. Confirmed live: two different test CVs
+   * against resume_auto_optimiser returned byte-identical cached output.
+   * Hashing the full normalised string (no truncation) costs nothing
+   * material -- MD5 over a few KB is negligible -- and preserves the
+   * intended "near-duplicate" normalisation (case/whitespace/punctuation)
+   * for genuinely short queries, which were never affected by this bug. */
   getCacheKey(featureId, userInput, context = {}) {
     const normalised = String(userInput || '')
       .toLowerCase()
       .trim()
       .replace(/\s+/g, ' ')
       .replace(/[^\w\s]/g, '')
-      .slice(0, 500)                              // cap at 500 chars
     const ctx = `${context.country || ''}_${context.currentRole || ''}_${context.language || ''}`
     const raw = `${featureId}::${normalised}::${ctx}`
     return crypto.createHash('md5').update(raw).digest('hex')
@@ -76,3 +91,4 @@ class ResponseCache {
 }
 
 module.exports = new ResponseCache()
+module.exports.ResponseCache = ResponseCache
