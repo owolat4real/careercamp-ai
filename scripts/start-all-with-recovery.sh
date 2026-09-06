@@ -165,6 +165,34 @@ cd /workspace/careercamp-ai
     chatterbox-tts fastapi uvicorn >/dev/null 2>&1
 }
 
+# Real, live-caught gap (2026-09-06): this gateway's own /health
+# `internet.duckduckgo` flag (engine/internet.js) was a hardcoded `true`
+# with no live check, and its actual call hit DuckDuckGo's Instant-Answer
+# API, confirmed (from cs_fixed) to return empty results for real
+# queries -- there was no genuinely working self-hosted web search
+# anywhere in this whole stack. SearXNG (open-source metasearch engine,
+# aggregates Google/Brave/Wikipedia/etc.) now runs locally here,
+# localhost-only (settings.yml's default bind_address is already
+# 127.0.0.1 -- deliberately never exposed on its own public port, since
+# it has no auth of its own; reachable only via this gateway's
+# /v1/search route, which reuses apiKeyAuth). Idempotent clone+install,
+# same pattern as venv-tts above. request_timeout raised from
+# SearXNG's own default (3.0s) to 10.0s -- confirmed live that the
+# default was too tight for real concurrent first-request engine
+# dispatch on this pod (individual raw requests measured ~0.4s, but the
+# default 3s budget still weighted every one of 7 engines dispatched at
+# once, sharing that budget, unresponsive-timeout on all of them).
+if [ ! -d /workspace/searxng-src ]; then
+  cd /workspace
+  git clone --depth 1 https://github.com/searxng/searxng.git searxng-src >/dev/null 2>&1
+  python3 -m venv /workspace/searxng-venv
+  /workspace/searxng-venv/bin/pip install -q -r /workspace/searxng-src/requirements.txt
+  SECRET=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+  sed -i "s/^\(  formats:\)$/  formats:\n    - json/" /workspace/searxng-src/searx/settings.yml
+  sed -i "s/request_timeout: 3.0/request_timeout: 10.0/" /workspace/searxng-src/searx/settings.yml
+  sed -i "s/secret_key: \"ultrasecretkey\".*/secret_key: \"$SECRET\"/" /workspace/searxng-src/searx/settings.yml
+fi
+
 echo "=== 6. Starting all services ==="
 pkill -f 'ollama serve' 2>/dev/null || true
 pkill -f 'node server.js' 2>/dev/null || true
@@ -231,6 +259,9 @@ disown
 _rotate_log tts_server
 cd /workspace/careercamp-ai && HF_HOME=/workspace/hf_cache TTS_SERVER_PORT=3006 nohup ./venv-tts/bin/python tts_server.py >> "$LOG_DIR/tts_server.log" 2>&1 &
 disown
+_rotate_log searxng
+cd /workspace/searxng-src && SEARXNG_SETTINGS_PATH=/workspace/searxng-src/searx/settings.yml PYTHONPATH=/workspace/searxng-src nohup /workspace/searxng-venv/bin/python3 -m searx.webapp >> "$LOG_DIR/searxng.log" 2>&1 &
+disown
 sleep 3
 
 # Real gap found live (2026-08-27): talkinghead_server.py crashed from a
@@ -283,6 +314,7 @@ curl -s http://localhost:3003/health -o /dev/null -w 'ml-server  (3003): %{http_
 curl -s http://localhost:3004/health -o /dev/null -w 'talkinghead(3004): %{http_code}\n'
 curl -s http://localhost:3005/health -o /dev/null -w 'svd        (3005): %{http_code}\n'
 curl -s -X POST http://localhost:3006/v1/tts -H 'Content-Type: application/json' -d '{"text":"ok"}' -o /dev/null -w 'tts        (3006): %{http_code} (200 once the model is warm; POST-only, no /health route)\n'
+curl -s "http://localhost:8888/search?q=test&format=json" -o /dev/null -w 'searxng    (8888): %{http_code} (localhost-only; real callers use this gateway'"'"'s /v1/search)\n'
 
 echo ""
 echo "Public URLs (stable, named Cloudflare Tunnel — $POD_NAME):"

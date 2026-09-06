@@ -95,10 +95,16 @@ _restart() {
     "node server.js")
       ( cd /workspace/careercamp-ai && TTS_SERVER_URL=http://localhost:3006 nohup node server.js >> /workspace/logs/gateway.log 2>&1 & )
       ;;
+    "searx.webapp")
+      # Same fragile "bare nohup, no restart-on-crash" pattern as the other
+      # aux servers above -- added 2026-09-06 alongside SearXNG itself
+      # (start-all-with-recovery.sh's own comment on that addition).
+      ( cd /workspace/searxng-src && SEARXNG_SETTINGS_PATH=/workspace/searxng-src/searx/settings.yml PYTHONPATH=/workspace/searxng-src nohup /workspace/searxng-venv/bin/python3 -m searx.webapp >> /workspace/logs/searxng.log 2>&1 & )
+      ;;
   esac
 }
 
-PATTERNS=("talkinghead_server.py" "svd_server.py" "tts_server.py" "python3 api_server.py" "ollama serve" "node server.js")
+PATTERNS=("talkinghead_server.py" "svd_server.py" "tts_server.py" "python3 api_server.py" "ollama serve" "node server.js" "searx.webapp")
 
 echo "[watchdog] $(date -u +%FT%TZ) started, checking every ${CHECK_INTERVAL_S}s: ${PATTERNS[*]}"
 

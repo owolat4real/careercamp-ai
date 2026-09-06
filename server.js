@@ -262,6 +262,38 @@ app.use('/v1/audio',             apiKeyAuth, (req, _, next) => { req.engines = a
 app.use('/v1/bert',   apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, bertRoute);
 app.use('/v1/agent',  apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, agentRoute);
 
+// ── Self-hosted web search (SearXNG) ───────────────────────
+// Real, live-caught gap (2026-09-06): this gateway's own /health
+// `internet.duckduckgo` flag was a hardcoded `true` with no live check
+// (engine/internet.js), and its actual DuckDuckGo call hits the same
+// Instant-Answer API confirmed (from cs_fixed) to return empty results
+// for real queries -- there was no genuinely working self-hosted search
+// anywhere. SearXNG (open-source metasearch engine, /workspace/searxng-src)
+// now runs locally on this pod (127.0.0.1:8888, started by
+// scripts/start-all-with-recovery.sh) -- this route is the one way to
+// reach it, reusing apiKeyAuth rather than exposing SearXNG's own port
+// directly (it has no auth of its own, and a public RunPod proxy port
+// with zero auth would let anyone who found the URL use this pod as a
+// free anonymous search proxy).
+app.get('/v1/search', apiKeyAuth, async (req, res) => {
+  const q = String(req.query.q || '').slice(0, 500);
+  if (!q) return res.status(400).json({ error: { message: 'q is required', type: 'invalid_request_error', code: 400 } });
+  try {
+    const r = await axios.get('http://127.0.0.1:8888/search', {
+      params: { q, format: 'json' },
+      timeout: 12000,
+    });
+    const results = (r.data?.results || []).slice(0, 8).map(x => ({
+      title: x.title || '', url: x.url || '', snippet: x.content || '',
+    }));
+    res.json({ query: q, results, engine: 'searxng-selfhosted' });
+  } catch (e) {
+    // Real, honest failure -- never fabricate results. A caller (cs_fixed's
+    // services/search.js) falls through to its next real tier on this.
+    res.status(502).json({ error: { message: `SearXNG unreachable: ${e.code || e.message}`, type: 'upstream_error', code: 502 } });
+  }
+});
+
 // ── Local-First AI Platform v2.0 routes ───────────────────
 // These 6 had no apiKeyAuth at all — harmless while this gateway was only
 // ever reachable at localhost:3002, but a real hole once it gets a public
