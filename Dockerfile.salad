@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════════════
+# SaladCloud all-in-one image: Ollama (+ our custom models) + the Node
+# gateway (server.js) + the Python ML server (api_server.py), all in one
+# container group — the closest lift-and-shift of how the RunPod pod
+# already runs this stack (see DEPLOY_RUNPOD.md), since Salad's container
+# groups don't give us the same easy inter-container networking
+# docker-compose.yml relies on for the split (gateway/ollama/ml-gpu)
+# setup.
+#
+# Deliberately does NOT bake cs-careeradvisor (32B Aya-Expanse) in by
+# default — see salad-entrypoint.sh's own comment: it needs ~22GB+ free
+# VRAM alone, which doesn't leave room for the other 3 models on a 24GB
+# card. The app already falls back to Groq/OpenRouter for deep-reasoning
+# requests when cs-careeradvisor isn't present (OPUS_MIN_FREE_MB gate in
+# services/csModelGateway.js) — this is a deliberate, cost-conscious
+# choice for THIS GPU tier, not a missing feature. Set
+# RUN_CS_CAREERADVISOR=true (Environment Variables in the Salad form) on
+# a bigger GPU tier (40GB+) to include it.
+#
+# Build (from this careercamp-ai/ directory):
+#   docker build -f Dockerfile.salad -t <your-dockerhub-username>/careerstudiomax:latest .
+# Push:
+#   docker push <your-dockerhub-username>/careerstudiomax:latest
+# ═══════════════════════════════════════════════════════════════════════
+FROM ollama/ollama:latest
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl ca-certificates gnupg python3 python3-pip python3-venv \
+      ffmpeg libsndfile1 libgomp1 unzip \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip \
+    && unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+
+COPY . .
+RUN mkdir -p models/.cache models/whisper \
+    && chmod +x scripts/salad-entrypoint.sh
+
+EXPOSE 3002 3003 11434
+
+# Generous start-period — first boot restores a ~2GB model backup from S3
+# plus pulls llava-phi3, easily 3-5+ minutes depending on bandwidth.
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
+  CMD curl -f http://localhost:${PORT:-3002}/health || exit 1
+
+ENTRYPOINT ["/app/scripts/salad-entrypoint.sh"]
