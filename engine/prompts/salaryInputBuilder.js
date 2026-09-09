@@ -3,7 +3,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
  * SALARY INPUT BUILDER
  * Extracts maximum context from the user's raw salary question and
- * structures it so cs-sonnet has everything it needs to fill in
+ * structures it so cs-careerprince has everything it needs to fill in
  * the SIPS (Structured Intelligence Prompt System) template.
  *
  * The more context extracted here, the less the model needs to guess,

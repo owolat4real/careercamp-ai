@@ -3,7 +3,7 @@ const axios = require('axios')
 
 const OLLAMA_URL  = process.env.OLLAMA_URL  || 'http://127.0.0.1:11434'
 const INTERVAL_MS = parseInt(process.env.KEEP_WARM_INTERVAL_MS) || 4 * 60 * 1000  // 4 min
-const MODELS      = ['cs-haiku', 'cs-sonnet']
+const MODELS      = ['cs-careerchief', 'cs-careerprince']
 
 async function _pingModel(model) {
   try {

@@ -65,9 +65,9 @@ const OLLAMA_URL = process.env.CS_INFERENCE_URL || 'http://localhost:11434';
 const TIMEOUT    = 45_000;
 
 const LOCAL_MODELS = {
-  'cs-haiku':      process.env.CS_HAIKU_MODEL  || 'cs-haiku',
-  'cs-sonnet':     process.env.CS_SONNET_MODEL || 'cs-sonnet',
-  'cs-opus':       process.env.CS_OPUS_MODEL   || 'cs-opus',
+  'cs-careerchief':      process.env.CS_HAIKU_MODEL  || 'cs-careerchief',
+  'cs-careerprince':     process.env.CS_SONNET_MODEL || 'cs-careerprince',
+  'cs-careerking':       process.env.CS_OPUS_MODEL   || 'cs-careerking',
   'careerlm-nano': 'careerlm-nano',
 };
 
@@ -283,7 +283,7 @@ async function callOllama(ollamaModel, messages, maxTokens, task, numCtx, wantsJ
     // Real fix (2026-08-11): 32768 exceeded every real deployed tier's
     // actual Modelfile ceiling -- callers now always pass a real numCtx
     // via featureModelMap.js's corrected TIER_CONFIG, so this fallback
-    // should rarely fire, but 2048 (the smallest real ceiling, cs-haiku's)
+    // should rarely fire, but 2048 (the smallest real ceiling, cs-careerchief's)
     // is the only value that's never wrong if it ever does.
     options:     { num_gpu: numGpu, num_batch: 512, num_ctx: numCtx || 2048 },
   };
@@ -297,30 +297,30 @@ async function callOllama(ollamaModel, messages, maxTokens, task, numCtx, wantsJ
 /* ── LOCAL CALL WITH HAIKU→SONNET RETRY ─────────────────────────── */
 async function callWithRetry(feature, messages, numCtx) {
   const primaryModel = LOCAL_MODELS[feature.model] || feature.model;
-  const sonnetModel  = LOCAL_MODELS['cs-sonnet'];
+  const sonnetModel  = LOCAL_MODELS['cs-careerprince'];
   const wantsJson    = !!feature.schema;
 
   try {
     const content = await callOllama(primaryModel, messages, feature.maxTokens, feature.task, numCtx, wantsJson);
 
     // Haiku leak guard — auto retry with sonnet
-    if (feature.model === 'cs-haiku') {
+    if (feature.model === 'cs-careerchief') {
       const leak = _DL(content);
       if (leak.leaked) {
-        console.warn(`[CAMP] cs-haiku leaked (${leak.reason}) → retrying cs-sonnet`);
+        console.warn(`[CAMP] cs-careerchief leaked (${leak.reason}) → retrying cs-careerprince`);
         const retried = await callOllama(sonnetModel, messages, Math.max(feature.maxTokens, 800), feature.task, numCtx, wantsJson);
-        return { content: retried, model: 'cs-sonnet', retriedFrom: 'cs-haiku' };
+        return { content: retried, model: 'cs-careerprince', retriedFrom: 'cs-careerchief' };
       }
     }
     return { content, model: feature.model };
   } catch (primaryErr) {
     console.warn(`[CAMP] ${feature.model} failed:`, primaryErr.message?.slice(0, 60));
-    if (feature.model !== 'cs-sonnet') {
+    if (feature.model !== 'cs-careerprince') {
       try {
         const fallback = await callOllama(sonnetModel, messages, Math.max(feature.maxTokens, 800), feature.task, numCtx, wantsJson);
-        return { content: fallback, model: 'cs-sonnet', retriedFrom: feature.model };
+        return { content: fallback, model: 'cs-careerprince', retriedFrom: feature.model };
       } catch (sonnetErr) {
-        console.warn('[CAMP] cs-sonnet also failed:', sonnetErr.message?.slice(0, 60));
+        console.warn('[CAMP] cs-careerprince also failed:', sonnetErr.message?.slice(0, 60));
       }
     }
     throw primaryErr; // escalate to external fallback
@@ -504,11 +504,11 @@ async function* streamExternal(messages, maxTokens) {
 
 /* ── PROVIDER RACE — haiku-tier: fire Ollama + Groq simultaneously ── */
 async function callRace(feature, messages, numCtx) {
-  const haikuCall = callOllama(LOCAL_MODELS['cs-haiku'], messages, feature.maxTokens, feature.task, numCtx, !!feature.schema)
+  const haikuCall = callOllama(LOCAL_MODELS['cs-careerchief'], messages, feature.maxTokens, feature.task, numCtx, !!feature.schema)
     .then(content => {
       const leak = _DL(content);
       if (leak.leaked) throw new Error('haiku leaked');
-      return { content, model: 'cs-haiku' };
+      return { content, model: 'cs-careerchief' };
     });
 
   const groqKey = process.env.GROQ_API_KEY;
@@ -592,11 +592,11 @@ async function localInfer({ userInput, task, maxTokens }) {
     { role: 'user',   content: userInput },
   ];
   try {
-    const text = await callOllama(LOCAL_MODELS['cs-haiku'], messages, maxTokens || 150, task);
+    const text = await callOllama(LOCAL_MODELS['cs-careerchief'], messages, maxTokens || 150, task);
     return { content: text };
   } catch {
     try {
-      const text = await callOllama(LOCAL_MODELS['cs-sonnet'], messages, maxTokens || 300, task);
+      const text = await callOllama(LOCAL_MODELS['cs-careerprince'], messages, maxTokens || 300, task);
       return { content: text };
     } catch {
       return { content: '' };
@@ -684,7 +684,7 @@ router.post('/:featureId', apiKeyGuard, async (req, res) => {
 
   /* STEP 4 — System prompt + memory */
   const isSalary    = feature.task === 'salary_analysis';
-  const isHaikuTier = feature.model === 'cs-haiku';
+  const isHaikuTier = feature.model === 'cs-careerchief';
 
   /* STEP 3.5 — Semantic cache (skip model entirely on hit) */
   if (!wantsStream && !isSalary) {
@@ -744,7 +744,7 @@ router.post('/:featureId', apiKeyGuard, async (req, res) => {
 
   /* STEP 5 — Reasoning injection */
   let finalInput = cleanInput;
-  if (!isSalary && feature.model === 'cs-sonnet' && _RR(feature.task)) {
+  if (!isSalary && feature.model === 'cs-careerprince' && _RR(feature.task)) {
     finalInput = _BRP(feature.task, cleanInput);
   }
 
@@ -774,14 +774,14 @@ router.post('/:featureId', apiKeyGuard, async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'token', content: getInstantShell(featureId) })}\n\n`);
 
     const ollamaModel = LOCAL_MODELS[feature.model] || feature.model;
-    const isHaiku     = feature.model === 'cs-haiku';
+    const isHaiku     = feature.model === 'cs-careerchief';
 
     try {
       for await (const event of streamLocal(ollamaModel, builtMessages, feature.maxTokens, feature.task, isHaiku, tierCfg.numCtx)) {
         if (event.type === 'leak_abort') {
           // Retry stream with sonnet
-          res.write(`data: ${JSON.stringify({ type: 'model_switch', to: 'cs-sonnet' })}\n\n`);
-          for await (const e2 of streamLocal(LOCAL_MODELS['cs-sonnet'], builtMessages, Math.max(feature.maxTokens, 800), feature.task, false, tierCfg.numCtx)) {
+          res.write(`data: ${JSON.stringify({ type: 'model_switch', to: 'cs-careerprince' })}\n\n`);
+          for await (const e2 of streamLocal(LOCAL_MODELS['cs-careerprince'], builtMessages, Math.max(feature.maxTokens, 800), feature.task, false, tierCfg.numCtx)) {
             res.write(`data: ${JSON.stringify(e2)}\n\n`);
             if (e2.type === 'done' || e2.type === 'error') break;
           }

@@ -212,9 +212,9 @@ sleep 2
 # see /root/start_ollama.sh's own history) -- already correct here, kept.
 #
 # Real fix (2026-08-30): OLLAMA_KEEP_ALIVE=-1 pins every loaded model
-# (including cs-opus, ~22GB) in VRAM forever. Live-caught: this pod also
+# (including cs-careerking, ~22GB) in VRAM forever. Live-caught: this pod also
 # now runs svd_server.py (~10GB resident) and tts_server.py (~12GB
-# resident) at the same time, and with cs-opus never evicting the three
+# resident) at the same time, and with cs-careerking never evicting the three
 # together left the 48GB card at 44.8GB/49.1GB used AT REST -- not
 # enough headroom for SVD to actually run inference, causing real,
 # live avatar-video generation failures under normal (non-peak) load.
@@ -276,7 +276,7 @@ disown
 sleep 1
 
 # Real gap found live (2026-09-02): backupCustomModels.sh (the only real
-# off-pod backup for cs-haiku/cs-sonnet/cs-embed -- cs-opus is a public
+# off-pod backup for cs-careerchief/cs-careerprince/cs-embed -- cs-careerking is a public
 # retag, doesn't need this) existed but had never actually succeeded (two
 # separate bugs), so the one backup in S3 was 8 days stale by the time
 # anyone checked. This starts a daily loop so a fresh backup exists

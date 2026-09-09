@@ -68,8 +68,8 @@ async function runStartupAudit() {
 
     // Coexist analysis
     console.log('  Coexistence on 4 GB VRAM:')
-    console.log(`    cs-haiku + cs-sonnet:  ~2662 MiB combined → ✅ Safe to coexist`)
-    console.log(`    cs-opus + anything:    ~4198 MiB min       → 🔴 Must evict first`)
+    console.log(`    cs-careerchief + cs-careerprince:  ~2662 MiB combined → ✅ Safe to coexist`)
+    console.log(`    cs-careerking + anything:    ~4198 MiB min       → 🔴 Must evict first`)
 
   } catch (err) {
     console.log('  ⚠️  No NVIDIA GPU detected (nvidia-smi failed)')

@@ -1,5 +1,5 @@
 # Real multilingual-first revision (2026-08-07, same day as the 70B swap
-# below it replaces): cs-opus targeted meta-llama/Llama-3.3-70B-Instruct
+# below it replaces): cs-careerking targeted meta-llama/Llama-3.3-70B-Instruct
 # briefly, then was corrected to CohereLabs/Aya-Expanse-32B once real
 # multilingual coverage was confirmed as a hard requirement. Verified via
 # real research before this change (not assumed):
@@ -15,14 +15,14 @@
 #     context, and confirmed directly pullable from Ollama's own library
 #     (19 quantized versions listed, incl. Ollama/llama.cpp-compatible).
 # `ollama pull aya-expanse:32b` (real, official library reference) then:
-#   ollama create cs-opus -f Modelfile.cs-opus
+#   ollama create cs-careerking -f Modelfile.cs-careerking
 # (this FROM line only resolves once that pull has actually happened on
 # whatever host serves CS_INFERENCE_URL — it is not itself the download)
 FROM aya-expanse:32b
 # CORRECTION (2026-08-08, real production cutover attempt): every comment
 # below assuming "the same 40-80GB pod" was wrong -- the REAL pod actually
 # serving CS_INFERENCE_URL is a single RTX A5000, 24GB total VRAM, shared
-# with cs-sonnet/cs-haiku/cs-embed/vision/Chatterbox TTS all needing to
+# with cs-careerprince/cs-careerchief/cs-embed/vision/Chatterbox TTS all needing to
 # coexist. Confirmed the hard way: num_gpu 99 (full offload) genuinely
 # OOM'd in production -- real error, not a guess: "cudaMalloc failed: out
 # of memory, alloc_tensor_range: failed to allocate CUDA0 buffer of size
@@ -64,13 +64,13 @@ PARAMETER num_batch 256
 # genuinely no longer applies. Real numbers on the new card: nvidia-smi
 # reports 46068 MiB usable. Full 40-layer offload needs the same real
 # ~18868 MiB (19789938688 bytes, confirmed OOM error above) regardless of
-# card. Budgeting cs-sonnet (~2500 MiB per its own Modelfile's "2B fits
-# in 4GB" claim), cs-haiku (~1500 MiB), cs-embed + CUDA/OS overhead
+# card. Budgeting cs-careerprince (~2500 MiB per its own Modelfile's "2B fits
+# in 4GB" claim), cs-careerchief (~1500 MiB), cs-embed + CUDA/OS overhead
 # (~1500 MiB) alongside it: 18868 + 2500 + 1500 + 1500 = 24368 MiB total,
 # leaving ~21700 MiB of real spare headroom on this card. Full GPU
-# offload (99, matching cs-haiku/cs-sonnet's own "all layers" convention)
+# offload (99, matching cs-careerchief/cs-careerprince's own "all layers" convention)
 # is genuinely safe now -- this should also fix the repeated real
-# "cs-opus timeout of 60000ms exceeded" failures from the partial-CPU-
+# "cs-careerking timeout of 60000ms exceeded" failures from the partial-CPU-
 # offload path on the old card. If this pod's usage pattern changes
 # (more models resident, larger context) re-verify real free VRAM before
 # assuming this still holds, same discipline as the original comment.

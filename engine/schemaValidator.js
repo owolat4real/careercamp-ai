@@ -1,7 +1,7 @@
 'use strict';
 /**
  * SCHEMA VALIDATOR — Pydantic-style structured output validation
- * Validates and auto-repairs JSON from local models (cs-haiku, cs-sonnet).
+ * Validates and auto-repairs JSON from local models (cs-careerchief, cs-careerprince).
  * Small models produce malformed JSON — this layer heals it before it
  * reaches the caller, so every structured endpoint gets a valid object.
  */

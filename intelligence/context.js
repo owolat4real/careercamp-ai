@@ -70,7 +70,7 @@ function buildSystemPrompt(userCtx = {}) {
   // Rewritten 2026-08-23 — live-confirmed this block was leaking onto BOTH
   // CAMP's /v1/chat/completions and Transformer's /v1/chat (this file's
   // buildFullContext() is called by careercamp-ai/api/completions.js, and
-  // Transformer's cs-haiku tier routes through the same underlying
+  // Transformer's cs-careerchief tier routes through the same underlying
   // gateway). Four real problems in the old text, fixed here:
   //   1. Misattributed as "CSTM-1" — that name is reserved for the main
   //      consumer platform's own engine (middleware/brain.js's CSTM1

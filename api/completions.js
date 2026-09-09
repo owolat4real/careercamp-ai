@@ -33,9 +33,9 @@ router.post('/', async (req, res) => {
   const systemContent = await context.buildFullContext(prompt, userCtx);
   const system        = sysMsg ? sysMsg.content + '\n\n' + systemContent : systemContent;
 
-  // cs-opus (careerlm-xl) is a fundamentally different tier from
+  // cs-careerking (careerlm-xl) is a fundamentally different tier from
   // sonnet/haiku: 32B, partial-CPU-offload on this hardware (see
-  // models/Modelfile.cs-opus), real measured cold-start ~57s just to
+  // models/Modelfile.cs-careerking), real measured cold-start ~57s just to
   // load the runner before any generation even starts. engine/llm.js's
   // ollamaInfer() defaults to a 15s timeout (opts.timeout || 15000) --
   // deliberately tight for the fast tier's own documented "15s x2
@@ -46,10 +46,10 @@ router.post('/', async (req, res) => {
   // through to the generic "offline" response, even though the model
   // itself was working fine (confirmed live: 10.9s once warm). Give
   // opus real headroom instead of the fast-tier default, and its own
-  // real num_ctx (8192, from Modelfile.cs-opus) instead of the
+  // real num_ctx (8192, from Modelfile.cs-careerking) instead of the
   // model-agnostic 2048 floor ollamaInfer() falls back to when a caller
   // doesn't specify one.
-  const isOpusTier = model === 'cs-opus' || model === 'careerlm-xl';
+  const isOpusTier = model === 'cs-careerking' || model === 'careerlm-xl';
   const opts = {
     maxTokens: max_tokens || 8000,
     temp:      temperature || 0.82,

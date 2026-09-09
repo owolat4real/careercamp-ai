@@ -69,7 +69,7 @@ logger = logging.getLogger("talkinghead")
 # identical real fix: free VRAM from Ollama before loading heavy models,
 # not after crashing.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-MODELS_TO_EVICT = ["cs-opus", "cs-sonnet", "cs-embed", "llava-phi3"]
+MODELS_TO_EVICT = ["cs-careerking", "cs-careerprince", "cs-embed", "cs-careerqueen"]
 MIN_FREE_MIB_TARGET = 4000  # SadTalker's 3 model classes are far lighter than SVD-XT's ~10-11GB
 
 

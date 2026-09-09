@@ -39,7 +39,7 @@ router.get('/:featureId', apiKeyGuard, (req, res) => {
   res.json({
     featureId,
     task,
-    recommendedModel: TASK_MODELS[task] || 'cs-sonnet',
+    recommendedModel: TASK_MODELS[task] || 'cs-careerprince',
     description: `Feature ${featureId} maps to task: ${task}`,
   });
 });

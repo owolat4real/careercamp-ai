@@ -35,11 +35,11 @@ let ollamaVisionModel = null; // the actual pulled model name to use
 // a genuine non-terminating call. Because this Ollama instance runs with
 // OLLAMA_NUM_PARALLEL=1, one hung avatarvid-2b request permanently occupies
 // the pod's only inference slot and silently blocks EVERY other model too
-// (cs-opus/sonnet/haiku text included) until Ollama is restarted — this is
+// (cs-careerking/sonnet/haiku text included) until Ollama is restarted — this is
 // not a self-contained vision failure, it can take down the whole pod.
 // VRAM headroom was not the cause (7GB+ free at the time, well above
 // _makeRoomForVision()'s threshold below) so this is a genuine model/runtime
-// bug, not a resource contention issue eviction can fix. llava-phi3 (also
+// bug, not a resource contention issue eviction can fix. cs-careerqueen (also
 // pulled) handles the identical real image correctly in ~1s once warm.
 // Demoted below the working models until the underlying hang is root-caused
 // separately — do not move it back above llava/moondream without first
@@ -52,7 +52,7 @@ async function checkVisionModels() {
     const r = await axios.get(`${OLLAMA_URL}/api/tags`, { timeout: 3000 });
     const models = (r.data?.models || []).map(m => m.name);
     // Previously hardcoded 'llava:7b' in ollamaVisionInfer() regardless of
-    // what was actually pulled — real pulled models here are llava-phi3,
+    // what was actually pulled — real pulled models here are cs-careerqueen,
     // moondream, avatarvid-2b, none of which match that literal name, so
     // every vision call 404'd against Ollama and silently fell through to
     // the (also failing) lower tiers. Store the real matched name instead.
@@ -62,7 +62,7 @@ async function checkVisionModels() {
     }
     ollamaVision = !!ollamaVisionModel;
     if (ollamaVision) console.log(`[CareerVision] Vision model available in Ollama: ${ollamaVisionModel}`);
-    else console.warn('[CareerVision] No vision model in Ollama. Run: ollama pull llava-phi3');
+    else console.warn('[CareerVision] No vision model in Ollama. Run: ollama pull cs-careerqueen');
   } catch (_) { ollamaVision = false; ollamaVisionModel = null; }
 }
 
@@ -129,7 +129,7 @@ Label each section clearly.`,
 // its own heavy vision model, but this NATIVE Ollama vision path had no
 // equivalent. Confirmed live on an 8GB card: a real image+prompt request to
 // avatarvid-2b hung indefinitely (not a clean error) because its ~900MB
-// vision projector had nowhere to fit alongside cs-haiku/sonnet/opus already
+// vision projector had nowhere to fit alongside cs-careerchief/sonnet/opus already
 // resident — plain requests with no `images` field worked fine and fast
 // (sub-second), so the hang is specifically the projector's VRAM, not the
 // model or the request format. Evicting via keep_alive:0 is safe: Ollama
@@ -137,7 +137,7 @@ Label each section clearly.`,
 // request, no explicit reload code needed (same reasoning already used on
 // the Python side).
 const VISION_MIN_FREE_MIB = 2500; // avatarvid-2b (~1.7GB) + its projector + inference headroom
-const MODELS_TO_EVICT_FOR_VISION = ['cs-opus', 'cs-sonnet', 'cs-haiku'];
+const MODELS_TO_EVICT_FOR_VISION = ['cs-careerking', 'cs-careerprince', 'cs-careerchief'];
 
 function _freeMiB() {
   return new Promise((resolve) => {

@@ -3,11 +3,11 @@
  * gpuScheduler.js — GPU-aware concurrency limiter per model tier.
  *
  * Original limits below were validated on an RTX 3050 Laptop GPU (4 GB
- * VRAM, 2560 CUDA cores). Real, corrected state (2026-08-11): cs-opus is
+ * VRAM, 2560 CUDA cores). Real, corrected state (2026-08-11): cs-careerking is
  * NOT on a 40-80GB pod — that was an intermediate, never-shipped plan.
  * The real, currently-deployed pod is a single RTX A5000 (24GB VRAM),
- * and cs-opus is a real 32B model (Aya Expanse), partially GPU-offloaded
- * (see cs_fixed/models/Modelfile.cs-opus's own 2026-08-08 production-OOM
+ * and cs-careerking is a real 32B model (Aya Expanse), partially GPU-offloaded
+ * (see cs_fixed/models/Modelfile.cs-careerking's own 2026-08-08 production-OOM
  * correction — the real ground truth for what's actually deployed).
  * haiku/sonnet stay on the same small models these limits were validated
  * against, so their numbers are unchanged.

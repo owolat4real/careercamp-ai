@@ -1,7 +1,7 @@
 'use strict';
 /* ══════════════════════════════════════════════════════════════
    QUALITATIVE SCORER — Layer 2 of the 3-layer hybrid.
-   Uses cs-haiku (careerlm-fast) so it's fast and cheap.
+   Uses cs-careerchief (careerlm-fast) so it's fast and cheap.
    Returns { aiScore: 0-100, analysis: string, suggestions: [] }
 ══════════════════════════════════════════════════════════════ */
 const llm = require('../../engine/llm');
