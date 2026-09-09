@@ -2,7 +2,7 @@
 /**
  * MEMORY SAVER — Keeps conversation context under 200 tokens always.
  * Extracts career facts from messages into a structured profile.
- * Compresses old history with cs-careerchief when the message count exceeds threshold.
+ * Compresses old history with cs-careerbriefing when the message count exceeds threshold.
  */
 
 const COMPRESS_AFTER     = 4;   // messages before compression

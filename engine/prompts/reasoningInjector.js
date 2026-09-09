@@ -3,7 +3,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
  * SALARY REASONING INJECTOR
  *
- * Forces cs-careerprince to reason privately before outputting salary data.
+ * Forces cs-careerreasoning to reason privately before outputting salary data.
  * This is the primary hallucination-elimination technique:
  *   STEP 1 — model writes a private reasoning block
  *   STEP 2 — model writes the public structured output
@@ -16,7 +16,7 @@
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Build the private reasoning chain that cs-careerprince must work through
+ * Build the private reasoning chain that cs-careerreasoning must work through
  * before producing any salary data.
  *
  * This text is injected as the START of the assistant's response

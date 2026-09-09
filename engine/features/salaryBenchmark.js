@@ -24,7 +24,7 @@ const { gatherSalaryLiveData, buildGroundingBlock } = require('../../core/liveDa
 
 /* ── SALARY FEATURE CONFIG OVERRIDES ─────────────────────────────────── */
 const SALARY_CALL_OVERRIDES = {
-  model:     'cs-careerprince',   /* force sonnet — salary needs the best local model */
+  model:     'cs-careerreasoning',   /* force sonnet — salary needs the best local model */
   maxTokens: 2048,          /* 800+ word target requires generous token budget */
   task:      'salary_analysis',
   temperature: 0.65,        /* lower = less hallucination on numeric data */

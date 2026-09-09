@@ -9,11 +9,11 @@
  *
  * Tier hierarchy (real numCtx values below, corrected 2026-08-11 — see
  * that date's comment on TIER_CONFIG for why these numbers changed):
- *   careerlm-nano   Classifiers, yes/no, single-value outputs    cs-careerchief   2K ctx
- *   careerlm-fast   Short structured output, headlines, snippets  cs-careerchief   2K ctx
- *   careerlm-base   Long-form reasoning, standard career tasks    cs-careerprince  4K ctx
- *   careerlm-long   Document/contract analysis, full CV rewrites  cs-careerprince  4K ctx (name is real but honest: see note below)
- *   careerlm-deep   Reserved — deep multi-factor analysis         cs-careerking    8K ctx
+ *   careerlm-nano   Classifiers, yes/no, single-value outputs    cs-careerbriefing   2K ctx
+ *   careerlm-fast   Short structured output, headlines, snippets  cs-careerbriefing   2K ctx
+ *   careerlm-base   Long-form reasoning, standard career tasks    cs-careerreasoning  4K ctx
+ *   careerlm-long   Document/contract analysis, full CV rewrites  cs-careerreasoning  4K ctx (name is real but honest: see note below)
+ *   careerlm-deep   Reserved — deep multi-factor analysis         cs-careeradvisor    8K ctx
  *
  * Fallback order (all tiers, all the time):
  *   Ollama (tier-appropriate model + exact GPU layers)
@@ -33,40 +33,40 @@ const { FEATURE_MAP } = require('../config/featureMap');
 
    Real, live-caught bug (2026-08-11): these numCtx values didn't match
    what's actually baked into the real deployed Modelfiles (cs_fixed/
-   models/Modelfile.cs-careerchief/-sonnet/-opus). num_ctx is sent as a real
+   models/Modelfile.cs-careerbriefing/-sonnet/-opus). num_ctx is sent as a real
    per-request Ollama option (see routes/camp.js's callOllama/streamLocal),
    so every real request on every tier was asking Ollama to allocate a
    bigger KV cache than the Modelfile's own deliberately-tuned ceiling
-   (chosen specifically to leave headroom for cs-careerprince/haiku/opus/embed/
+   (chosen specifically to leave headroom for cs-careerreasoning/haiku/opus/embed/
    vision/Chatterbox to coexist on the real, single 24GB A5000 card this
-   platform actually ran on at the time — see Modelfile.cs-careerking's own
+   platform actually ran on at the time — see Modelfile.cs-careeradvisor's own
    2026-08-08 production-OOM correction). Aligned every tier down to the
    real, then-deployed ceiling.
 
    RAISED 2026-08-28: the card since upgraded to a 48GB A40 (Modelfile.
-   cs-careerking's 2026-08-23 note), and cs-careerking's own real benchmark
+   cs-careeradvisor's 2026-08-23 note), and cs-careeradvisor's own real benchmark
    (training/benchmark_context_window.js, run against the actual deployed
    pod) measured FLAT tokens/sec from 8192 up to 65536 -- the old ceilings
    were stale, not a hardware limit. careerlm-long's ctx now genuinely
    exceeds careerlm-base's (16384 vs 8192, via the LONG_CTX_FEATURES ->
-   'careerlm-long' override below still resolving to cs-careerprince but a
+   'careerlm-long' override below still resolving to cs-careerreasoning but a
    bigger maxOut/window than short-task features get) -- the earlier
    "same real ceiling as short tasks" caveat this comment used to carry no
-   longer applies. Re-run the benchmark against cs-careerprince/cs-careerchief
-   directly (not just cs-careerking) before pushing these further. */
+   longer applies. Re-run the benchmark against cs-careerreasoning/cs-careerbriefing
+   directly (not just cs-careeradvisor) before pushing these further. */
 const TIER_CONFIG = {
-  'careerlm-nano': { ollamaModel: 'cs-careerchief',  numCtx: 8192,  maxOut:  512,  gpuTier: 'haiku' },
-  'careerlm-fast': { ollamaModel: 'cs-careerchief',  numCtx: 8192,  maxOut: 2048,  gpuTier: 'haiku' },
-  'careerlm-base': { ollamaModel: 'cs-careerprince', numCtx: 8192,  maxOut: 4096,  gpuTier: 'sonnet' },
-  'careerlm-long': { ollamaModel: 'cs-careerprince', numCtx: 16384, maxOut: 4096,  gpuTier: 'sonnet' },
-  'careerlm-deep': { ollamaModel: 'cs-careerking',   numCtx: 65536, maxOut: 8192,  gpuTier: 'opus'   },
+  'careerlm-nano': { ollamaModel: 'cs-careerbriefing',  numCtx: 8192,  maxOut:  512,  gpuTier: 'haiku' },
+  'careerlm-fast': { ollamaModel: 'cs-careerbriefing',  numCtx: 8192,  maxOut: 2048,  gpuTier: 'haiku' },
+  'careerlm-base': { ollamaModel: 'cs-careerreasoning', numCtx: 8192,  maxOut: 4096,  gpuTier: 'sonnet' },
+  'careerlm-long': { ollamaModel: 'cs-careerreasoning', numCtx: 16384, maxOut: 4096,  gpuTier: 'sonnet' },
+  'careerlm-deep': { ollamaModel: 'cs-careeradvisor',   numCtx: 65536, maxOut: 8192,  gpuTier: 'opus'   },
 };
 
 /* ── LONG-CONTEXT OVERRIDES ──────────────────────────────────────────────
    Features that consume long input documents — classified as careerlm-long
-   even though their underlying model is cs-careerprince. Since the 2026-08-28
+   even though their underlying model is cs-careerreasoning. Since the 2026-08-28
    raise (see TIER_CONFIG above), careerlm-long genuinely gets a bigger
-   real numCtx than careerlm-base (16384 vs 8192, both cs-careerprince) — the
+   real numCtx than careerlm-base (16384 vs 8192, both cs-careerreasoning) — the
    "same ceiling either way" caveat this comment used to carry no longer
    applies.                                                                */
 const LONG_CTX_FEATURES = new Set([
@@ -79,7 +79,7 @@ const LONG_CTX_FEATURES = new Set([
 ]);
 
 /* ── NANO-TIER CLASSIFICATION ────────────────────────────────────────────
-   All classify-task features use cs-careerchief but only need minimal context.
+   All classify-task features use cs-careerbriefing but only need minimal context.
    Mark them careerlm-nano so callOllama allocates 4K ctx (not 8K/32K)
    — saves KV VRAM and speeds up prefill significantly.                     */
 const NANO_FEATURES = new Set([
@@ -110,9 +110,9 @@ function _deriveTier(featureId, featureCfg) {
   if (LONG_CTX_FEATURES.has(featureId)) return 'careerlm-long';
   if (NANO_FEATURES.has(featureId))     return 'careerlm-nano';
   if (featureCfg.model === 'careerlm-nano') return 'careerlm-nano';
-  if (featureCfg.model === 'cs-careerchief')  return 'careerlm-fast';
-  if (featureCfg.model === 'cs-careerking')   return 'careerlm-deep';
-  return 'careerlm-base'; // cs-careerprince default
+  if (featureCfg.model === 'cs-careerbriefing')  return 'careerlm-fast';
+  if (featureCfg.model === 'cs-careeradvisor')   return 'careerlm-deep';
+  return 'careerlm-base'; // cs-careerreasoning default
 }
 
 /* ── BUILD THE COMPLETE MAP ──────────────────────────────────────────── */
@@ -167,7 +167,7 @@ function getFeatureTier(featureId, requestType = null) {
 
 /**
  * One-line routing summary for [ROUTE] log lines.
- * @returns {string}  e.g. "resume_scorer → careerlm-base (cs-careerprince, 32K ctx)"
+ * @returns {string}  e.g. "resume_scorer → careerlm-base (cs-careerreasoning, 32K ctx)"
  */
 function routeSummary(featureId) {
   const { tier, ollamaModel, numCtx } = getFeatureTier(featureId);

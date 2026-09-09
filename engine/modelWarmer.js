@@ -1,8 +1,8 @@
 'use strict';
 /**
  * MODEL WARMER — Pings each local model at boot so Ollama loads them into VRAM.
- * Models pinged in priority order: cs-careerprince first (primary), then cs-careerchief,
- * then careerlm-nano (an alias for cs-careerchief, not a distinct model — see below).
+ * Models pinged in priority order: cs-careerreasoning first (primary), then cs-careerbriefing,
+ * then careerlm-nano (an alias for cs-careerbriefing, not a distinct model — see below).
  * Non-blocking — server starts even if models are cold; they warm lazily on first real call.
  */
 const axios = require('axios');
@@ -10,18 +10,18 @@ const axios = require('axios');
 const OLLAMA = process.env.CS_INFERENCE_URL || 'http://localhost:11434';
 
 const WARM_MODELS = [
-  { name: 'cs-careerprince',     alias: 'cs-careerprince-fast',   priority: 1 },
-  { name: 'cs-careerchief',      alias: 'cs-careerchief-fast',    priority: 2 },
-  // careerlm-nano is an alias for cs-careerchief (see engine/llm.js's OLLAMA_MAP),
+  { name: 'cs-careerreasoning',     alias: 'cs-careerreasoning-fast',   priority: 1 },
+  { name: 'cs-careerbriefing',      alias: 'cs-careerbriefing-fast',    priority: 2 },
+  // careerlm-nano is an alias for cs-careerbriefing (see engine/llm.js's OLLAMA_MAP),
   // never a distinct model actually registered in Ollama under that literal
   // name. This entry previously used `alias: 'careerlm-nano'` -- checking
   // Ollama for that exact string, which can never match -- so it logged a
   // permanent false "not found in Ollama registry" warning even though the
-  // underlying model (cs-careerchief) was warm and working the entire time.
+  // underlying model (cs-careerbriefing) was warm and working the entire time.
   // Pointing the alias at the real registered name fixes both warmAll()'s
   // startup probe and quickPing('careerlm-nano') (used by
   // POST /v1/developer/ping/:model, which accepts this as a valid model id).
-  { name: 'careerlm-nano', alias: 'cs-careerchief',         priority: 3 },
+  { name: 'careerlm-nano', alias: 'cs-careerbriefing',         priority: 3 },
 ];
 
 const _warm = {};

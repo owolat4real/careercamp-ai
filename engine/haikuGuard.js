@@ -1,6 +1,6 @@
 'use strict';
 /**
- * HAIKU GUARD — Shared protection for all cs-careerchief call sites in CAMP gateway.
+ * HAIKU GUARD — Shared protection for all cs-careerbriefing call sites in CAMP gateway.
  * Mirror of careerstudio/services/haikuGuard.js — keep in sync.
  */
 

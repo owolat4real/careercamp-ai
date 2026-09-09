@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
 # Back up the genuinely custom, no-public-registry Ollama models
-# (cs-careerchief, cs-careerprince, cs-embed — see transfer-models-to-pod.sh's own
-# header comment: "there is no ollama pull cs-careerprince") to real off-pod
+# (cs-careerbriefing, cs-careerreasoning, cs-embed — see transfer-models-to-pod.sh's own
+# header comment: "there is no ollama pull cs-careerreasoning") to real off-pod
 # storage (S3), independent of any single pod or its Network Volume.
 #
 # Real incident this exists to prevent (2026-08-25): both pods' AI
@@ -11,7 +11,7 @@
 # anywhere off-RunPod. The Network Volume (/workspace) survived that
 # specific incident, but a volume-level failure or accidental deletion
 # would have taken the only copies of real, hours-of-compute fine-tuned
-# weights with it. cs-careerking is deliberately excluded — it's aya-
+# weights with it. cs-careeradvisor is deliberately excluded — it's aya-
 # expanse:32b, a real public Ollama library model, trivially re-pulled.
 #
 # Usage (run ON the pod that currently has the real, current models —
@@ -33,7 +33,7 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 
 OLLAMA_DIR="${OLLAMA_MODELS:-/workspace/ollama-models}"
 STAGE_DIR="/workspace/model-backup-stage"
-MODELS=(cs-careerchief cs-careerprince cs-embed)
+MODELS=(cs-careerbriefing cs-careerreasoning cs-embed)
 DATE_TAG="$(date -u +%Y-%m-%d)"
 TARBALL="/workspace/cs-custom-models-backup.tar.gz"
 S3_KEY="model-backups/cs-custom-models-${DATE_TAG}.tar.gz"

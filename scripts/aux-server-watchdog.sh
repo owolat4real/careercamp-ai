@@ -24,7 +24,7 @@
 # Real gap in the ORIGINAL scoping decision, found while completing this
 # session's infra audit (2026-08-30): `ollama serve` was grouped with
 # node server.js under "deserves more visible attention than a silent
-# auto-restart" -- but ollama backs cs-careerchief/cs-careerprince/cs-careerking, i.e. it
+# auto-restart" -- but ollama backs cs-careerbriefing/cs-careerreasoning/cs-careeradvisor, i.e. it
 # IS the self-hosted AI engine behind CSTM-2's careerlm, CAMP's chat,
 # and Transformer's fallback path. Losing it silently for the "over an
 # hour, completely unnoticed" duration this watchdog was built to

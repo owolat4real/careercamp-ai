@@ -2,7 +2,7 @@
 
 /* ═══════════════════════════════════════════════════════════════════════
  * CAREER SALARY INTELLIGENCE SYSTEM PROMPT (SIPS)
- * World-first structured prompt that forces cs-careerprince to produce
+ * World-first structured prompt that forces cs-careerreasoning to produce
  * expert-level salary intelligence with verified confidence levels,
  * negotiation scripts, and real career context.
  *

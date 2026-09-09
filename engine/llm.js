@@ -48,27 +48,27 @@ const groq = (ALLOW_EXTERNAL_AI && GROQ_KEY) ? new Groq({ apiKey: GROQ_KEY, time
 // model (mistral:7b) mid-chat causes Ollama to thrash for 90s+ while it
 // evicts/reloads. Keeping the brain chat to just 2 models (nano + base)
 // avoids that entirely. mistral:7b remains used for careerscore-v1 only.
-// cs-careerprince (LLaMA 3.2 3B, ~50 t/s) replaces careerlm-base (Mistral 7B, ~3 t/s)
+// cs-careerreasoning (LLaMA 3.2 3B, ~50 t/s) replaces careerlm-base (Mistral 7B, ~3 t/s)
 // for all medium/large/xl tiers — same quality, 15× faster on this hardware.
-// cs-careerking is kept for the true deep/XL tier where quality > speed.
+// cs-careeradvisor is kept for the true deep/XL tier where quality > speed.
 const OLLAMA_MAP = {
-  'careerlm-nano':   'cs-careerchief:latest',    // 0.6B — 130 t/s, quick tasks
-  'careerlm-small':  'cs-careerprince:latest',   // 2B   — 50 t/s, balanced
-  'careerlm-base':   'cs-careerprince:latest',   // 2B   — 50 t/s, balanced
-  'careerlm-large':  'cs-careerprince:latest',   // 2B   — 50 t/s, best quality/speed
-  'careerlm-xl':     'cs-careerking:latest',     // 32B (Aya Expanse, 2026-08-07 upgrade from 7B) — deep reasoning, real 23-language coverage
-  'careeragent-v1':  'cs-careerprince:latest',   // 2B   — agent tasks
-  'careerscore-v1':  'cs-careerprince:latest',   // 2B   — scoring
+  'careerlm-nano':   'cs-careerbriefing:latest',    // 0.6B — 130 t/s, quick tasks
+  'careerlm-small':  'cs-careerreasoning:latest',   // 2B   — 50 t/s, balanced
+  'careerlm-base':   'cs-careerreasoning:latest',   // 2B   — 50 t/s, balanced
+  'careerlm-large':  'cs-careerreasoning:latest',   // 2B   — 50 t/s, best quality/speed
+  'careerlm-xl':     'cs-careeradvisor:latest',     // 32B (Aya Expanse, 2026-08-07 upgrade from 7B) — deep reasoning, real 23-language coverage
+  'careeragent-v1':  'cs-careerreasoning:latest',   // 2B   — agent tasks
+  'careerscore-v1':  'cs-careerreasoning:latest',   // 2B   — scoring
 };
 
-// Fallback chain — fast models first. cs-careerprince (50 t/s) is tried before
+// Fallback chain — fast models first. cs-careerreasoning (50 t/s) is tried before
 // the slow 7B models (3-5 t/s) to keep response times under control.
-const LOCAL_FALLBACK_CHAIN = ['cs-careerprince:latest', 'cs-careerchief:latest', 'careerlm-base:latest', 'cs-careerking:latest', 'careerlm-nano:latest', 'mistral:7b', 'tinyllama:1.1b'];
+const LOCAL_FALLBACK_CHAIN = ['cs-careerreasoning:latest', 'cs-careerbriefing:latest', 'careerlm-base:latest', 'cs-careeradvisor:latest', 'careerlm-nano:latest', 'mistral:7b', 'tinyllama:1.1b'];
 
 // ── TASK → MODEL ROUTING ──────────────────────────────────────────────
-// cs-careerchief (130 t/s) for fast simple tasks; cs-careerprince (56 t/s) for quality
+// cs-careerbriefing (130 t/s) for fast simple tasks; cs-careerreasoning (56 t/s) for quality
 const TASK_MODEL_MAP = {
-  // cs-careerchief — fast, simple, no structure needed
+  // cs-careerbriefing — fast, simple, no structure needed
   summarise:        'careerlm-nano',   // 0.6B, 130 t/s
   classify:         'careerlm-nano',
   quick_reply:      'careerlm-nano',
@@ -79,7 +79,7 @@ const TASK_MODEL_MAP = {
   greeting:         'careerlm-nano',
   compress_history: 'careerlm-nano',
 
-  // cs-careerprince — quality reasoning + structured output
+  // cs-careerreasoning — quality reasoning + structured output
   career_advice:    'careerlm-small',  // 2B, 56 t/s
   cv_bullet:        'careerlm-small',
   cover_letter:     'careerlm-small',
@@ -101,7 +101,7 @@ const TASK_MODEL_MAP = {
 // Technique: role-priming + explicit section headers + length instruction.
 const TASK_PROMPTS = {
 
-  // ── cs-careerchief tasks (ultra-short prompt — 0.6B fits small context) ──
+  // ── cs-careerbriefing tasks (ultra-short prompt — 0.6B fits small context) ──
   summarise: `You are CareerLM. Summarise in 3 bullet points. Format: • point\nBe concise. Maximum 100 words.`,
 
   classify: `You are CareerLM. Classify the input. Reply with ONE word only from the given categories. No explanation.`,
@@ -113,7 +113,7 @@ Output: bullet points only. Maximum 150 words.`,
 
   keyword_extract: `You are CareerLM. Extract keywords. Output as comma-separated list only. No explanation.`,
 
-  // ── cs-careerprince tasks (full prompt — 2B handles complex instructions) ─
+  // ── cs-careerreasoning tasks (full prompt — 2B handles complex instructions) ─
   career_advice: `You are CareerLM — a Senior Career Director with 20 years of global experience.
 A client has paid for expert advice. Give them full, specific value.
 
@@ -296,7 +296,7 @@ async function checkOllama(retry = true) {
   }
 }
 
-// Strip markdown fences from model output — small models (cs-careerchief,
+// Strip markdown fences from model output — small models (cs-careerbriefing,
 // careerlm-nano) sometimes wrap JSON in ```json ... ``` despite instructions.
 function _stripMarkdown(text) {
   return text.trim()
@@ -309,11 +309,11 @@ function _stripMarkdown(text) {
 // through LOCAL_FALLBACK_CHAIN to whatever is actually pulled locally.
 function resolveOllamaTag(modelId) {
   // Callers that already know the real Ollama tag (e.g. csModelGateway.js on
-  // the Render side probes/calls "cs-careerchief"/"cs-careerprince"/"cs-careerking" directly,
+  // the Render side probes/calls "cs-careerbriefing"/"cs-careerreasoning"/"cs-careeradvisor" directly,
   // not through this file's careerlm-* alias table) get that exact tier
   // honored instead of being silently re-routed to whichever tier happens
-  // to be resident — otherwise a request for cs-careerking could be served by
-  // cs-careerprince with no indication anything was substituted.
+  // to be resident — otherwise a request for cs-careeradvisor could be served by
+  // cs-careerreasoning with no indication anything was substituted.
   const directTag = modelId.includes(':') ? modelId : `${modelId}:latest`;
   if (ollamaModels.includes(directTag)) return directTag;
 
@@ -347,7 +347,7 @@ async function ollamaInfer(prompt, system, modelTag, opts = {}) {
     model:      modelTag,
     stream:     false,
     keep_alive: '10m',
-    // Real, live-caught bug (2026-08-11): 8192 exceeded cs-careerchief's/cs-careerprince's
+    // Real, live-caught bug (2026-08-11): 8192 exceeded cs-careerbriefing's/cs-careerreasoning's
     // real deployed Modelfile ceilings (2048/4096) whenever a caller didn't
     // pass an explicit numCtx -- this function is model-agnostic (modelTag
     // is caller-supplied), so the fallback can't assume which real model is

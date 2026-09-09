@@ -193,12 +193,12 @@ app.get('/health', async (req, res) => {
 // Real, previously-missing proxy for Ollama's native /api/show — added
 // 2026-08-08. cs_fixed's services/csModelGateway.js#_refreshOpusDeployment()
 // calls `${CS_INFERENCE_URL}/api/show` to confirm which real model is
-// actually deployed under the "cs-careerking" name (vs what config merely
+// actually deployed under the "cs-careeradvisor" name (vs what config merely
 // declares) -- but CS_INFERENCE_URL in production points at THIS gateway
 // (port 3002), which never had an /api/show route at all. Every real call
 // was hitting a 404 and landing in that function's catch block, silently
 // reporting "unverified" regardless of whether the real deployment was
-// actually correct -- confirmed live: the real cs-careerking model was
+// actually correct -- confirmed live: the real cs-careeradvisor model was
 // genuinely the declared 32B, but this check still reported false because
 // it could never actually reach Ollama's real answer. Proxies straight
 // through to Ollama's own native endpoint (OLLAMA_URL, same var
@@ -371,7 +371,7 @@ async function boot() {
 
   // Warm local models (non-blocking — server starts regardless)
   warmAll().catch(() => {});
-  startKeepWarm();  // heartbeat: ping cs-careerchief + cs-careerprince every 4 min to prevent VRAM unload
+  startKeepWarm();  // heartbeat: ping cs-careerbriefing + cs-careerreasoning every 4 min to prevent VRAM unload
 
   // Initialise engines in parallel
   const results = await Promise.allSettled([

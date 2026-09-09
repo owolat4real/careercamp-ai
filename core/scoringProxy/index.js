@@ -2,7 +2,7 @@
 /* ══════════════════════════════════════════════════════════════
    SCORING PROXY — 3-layer hybrid scoring engine
    Layer 1: deterministic rule engine  (40% weight)
-   Layer 2: cs-careerchief qualitative AI    (60% weight)
+   Layer 2: cs-careerbriefing qualitative AI    (60% weight)
    Layer 3: weighted merge + full breakdown
 
    Supported tools: linkedin, cv, cover_letter

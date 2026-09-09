@@ -63,7 +63,7 @@ app = FastAPI(title="CareerStudio Image-to-Video Server")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 # Evicted before generation — reloads lazily on next real chat request,
 # no explicit reload needed.
-MODELS_TO_EVICT = ["cs-careerking", "cs-careerprince", "cs-embed", "cs-careerqueen"]
+MODELS_TO_EVICT = ["cs-careeradvisor", "cs-careerreasoning", "cs-embed", "cs-careerqueen"]
 
 MIN_FREE_MIB_TARGET = 13800
 # Measured SVD-XT peak ~10-11GB; the 12000 figure this used to be worked

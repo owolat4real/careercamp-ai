@@ -9,8 +9,8 @@
  *   4. Dynamic prompt     — feature-specific assembled system prompt
  *   5. Reasoning chain    — inject HRC for structured thinking
  *   6. Message build      — compose final messages array
- *   7. Local inference    — call Ollama (cs-careerprince → cs-careerchief → careerlm-nano)
- *   8. Leak check         — detectLeak → auto-retry with cs-careerprince
+ *   7. Local inference    — call Ollama (cs-careerreasoning → cs-careerbriefing → careerlm-nano)
+ *   8. Leak check         — detectLeak → auto-retry with cs-careerreasoning
  *   9. External fallback  — Groq → OpenRouter ONLY if all local fail
  *  10. Guardrail pipeline — 6-layer quality + safety gate
  *  11. Memory save        — async extract + persist career facts
@@ -48,43 +48,43 @@ const OLLAMA_TIMEOUT = 45000;
 // same fix as engine/featureModelMap.js's TIER_CONFIG (see that file's
 // comment for the full real explanation).
 // RAISED 2026-08-28 to match the same-day Modelfile/TIER_CONFIG raise
-// (see models/Modelfile.cs-careerprince/-haiku and featureModelMap.js's
+// (see models/Modelfile.cs-careerreasoning/-haiku and featureModelMap.js's
 // TIER_CONFIG for the real benchmark evidence behind these numbers --
 // the GPU upgrade to a 48GB A40 made the earlier, lower ceilings stale).
 const MODELS = {
-  'cs-careerprince':     { ollamaName: 'cs-careerprince',     maxTokens: 4096, contextWindow: 16384, tier: 'quality' },
-  'cs-careerchief':      { ollamaName: 'cs-careerchief',      maxTokens: 2048, contextWindow: 8192,  tier: 'fast'    },
-  'careerlm-nano': { ollamaName: 'cs-careerchief',      maxTokens: 512,  contextWindow: 8192,  tier: 'nano'    },
+  'cs-careerreasoning':     { ollamaName: 'cs-careerreasoning',     maxTokens: 4096, contextWindow: 16384, tier: 'quality' },
+  'cs-careerbriefing':      { ollamaName: 'cs-careerbriefing',      maxTokens: 2048, contextWindow: 8192,  tier: 'fast'    },
+  'careerlm-nano': { ollamaName: 'cs-careerbriefing',      maxTokens: 512,  contextWindow: 8192,  tier: 'nano'    },
 };
 
 /* ── TASK → MODEL MAP ──────────────────────────────────────────── */
 const TASK_MODELS = {
-  summarise:          'cs-careerchief',
-  classify:           'cs-careerchief',
-  quick_reply:        'cs-careerchief',
-  sentiment:          'cs-careerchief',
-  keyword_extract:    'cs-careerchief',
-  greeting:           'cs-careerchief',
-  title_generate:     'cs-careerchief',
-  format_check:       'cs-careerchief',
+  summarise:          'cs-careerbriefing',
+  classify:           'cs-careerbriefing',
+  quick_reply:        'cs-careerbriefing',
+  sentiment:          'cs-careerbriefing',
+  keyword_extract:    'cs-careerbriefing',
+  greeting:           'cs-careerbriefing',
+  title_generate:     'cs-careerbriefing',
+  format_check:       'cs-careerbriefing',
   compress_history:   'careerlm-nano',
   extract_facts:      'careerlm-nano',
   tag_suggest:        'careerlm-nano',
-  career_advice:      'cs-careerprince',
-  cv_bullet:          'cs-careerprince',
-  cover_letter:       'cs-careerprince',
-  interview_prep:     'cs-careerprince',
-  salary_analysis:    'cs-careerprince',
-  json_extract:       'cs-careerprince',
-  skill_gap:          'cs-careerprince',
-  job_match:          'cs-careerprince',
-  tool_analysis:      'cs-careerprince',
-  linkedin_optimise:  'cs-careerprince',
-  lifepath_sim:       'cs-careerprince',
-  reasoning:          'cs-careerprince',
-  achievement_format: 'cs-careerprince',
-  negotiation:        'cs-careerprince',
-  translation:        'cs-careerprince',
+  career_advice:      'cs-careerreasoning',
+  cv_bullet:          'cs-careerreasoning',
+  cover_letter:       'cs-careerreasoning',
+  interview_prep:     'cs-careerreasoning',
+  salary_analysis:    'cs-careerreasoning',
+  json_extract:       'cs-careerreasoning',
+  skill_gap:          'cs-careerreasoning',
+  job_match:          'cs-careerreasoning',
+  tool_analysis:      'cs-careerreasoning',
+  linkedin_optimise:  'cs-careerreasoning',
+  lifepath_sim:       'cs-careerreasoning',
+  reasoning:          'cs-careerreasoning',
+  achievement_format: 'cs-careerreasoning',
+  negotiation:        'cs-careerreasoning',
+  translation:        'cs-careerreasoning',
 };
 
 /* ── MAIN INFER ─────────────────────────────────────────────────── */
@@ -116,15 +116,15 @@ async function infer({
   const memoryContext = userMemory ? memory.toContextBlock(userMemory) : '';
 
   /* STEP 3: MODEL SELECTION */
-  const modelKey  = forceModel || TASK_MODELS[task] || 'cs-careerprince';
-  const modelCfg  = MODELS[modelKey] || MODELS['cs-careerprince'];
+  const modelKey  = forceModel || TASK_MODELS[task] || 'cs-careerreasoning';
+  const modelCfg  = MODELS[modelKey] || MODELS['cs-careerreasoning'];
   const tokenLimit = maxTokens || modelCfg.maxTokens;
 
   /* STEP 4: DYNAMIC SYSTEM PROMPT */
   let systemPrompt = assembler.assemble({ featureId, taskType: task, language, memoryContext, toolName });
 
   /* STEP 5: INJECT REASONING CHAIN */
-  if (modelKey === 'cs-careerprince') {
+  if (modelKey === 'cs-careerreasoning') {
     systemPrompt = hrc.inject(systemPrompt, task);
   } else {
     systemPrompt = hrc.injectShort(systemPrompt, task);
@@ -201,13 +201,13 @@ async function _callWithLeakRetry(modelKey, modelCfg, messages, tokenLimit, task
   // Try the selected model first
   const tryModels = [modelKey];
   // If not sonnet already, add sonnet as automatic retry target
-  if (modelKey !== 'cs-careerprince') tryModels.push('cs-careerprince');
+  if (modelKey !== 'cs-careerreasoning') tryModels.push('cs-careerreasoning');
   // Final safety net: if sonnet also fails, try haiku
-  if (!tryModels.includes('cs-careerchief')) tryModels.push('cs-careerchief');
+  if (!tryModels.includes('cs-careerbriefing')) tryModels.push('cs-careerbriefing');
 
   let lastErr;
   for (const key of tryModels) {
-    const cfg = MODELS[key] || MODELS['cs-careerprince'];
+    const cfg = MODELS[key] || MODELS['cs-careerreasoning'];
     try {
       const result = await _callOllama({
         model:     cfg.ollamaName,
@@ -218,10 +218,10 @@ async function _callWithLeakRetry(modelKey, modelCfg, messages, tokenLimit, task
       });
 
       // Haiku/nano leak guard
-      if (key === 'cs-careerchief' || key === 'careerlm-nano') {
+      if (key === 'cs-careerbriefing' || key === 'careerlm-nano') {
         const leak = detectLeak(result.content);
         if (leak.leaked) {
-          console.warn(`[InferenceEngine] ${key} leaked (${leak.reason}) → trying cs-careerprince`);
+          console.warn(`[InferenceEngine] ${key} leaked (${leak.reason}) → trying cs-careerreasoning`);
           lastErr = new Error(`${key}_leak`);
           continue;
         }
@@ -255,7 +255,7 @@ async function _callOllama({ model, messages, maxTokens, task, numCtx }) {
       temperature: task === 'json_extract' || task === 'classify' ? 0.1 : 0.7,
       stream:      false,
       // Real fix (2026-08-11): 32768 exceeded every real deployed tier's
-      // actual Modelfile ceiling; 2048 (cs-careerchief's real ceiling, the
+      // actual Modelfile ceiling; 2048 (cs-careerbriefing's real ceiling, the
       // smallest of the three) is never wrong regardless of which model
       // this call targets. See engine/featureModelMap.js's TIER_CONFIG
       // comment for the full real explanation.
@@ -291,12 +291,12 @@ async function* stream({
   const userMemory    = userId ? await memory.get(userId).catch(() => null) : null;
   const memoryContext = userMemory ? memory.toContextBlock(userMemory) : '';
 
-  const modelKey  = forceModel || TASK_MODELS[task] || 'cs-careerprince';
-  const modelCfg  = MODELS[modelKey] || MODELS['cs-careerprince'];
+  const modelKey  = forceModel || TASK_MODELS[task] || 'cs-careerreasoning';
+  const modelCfg  = MODELS[modelKey] || MODELS['cs-careerreasoning'];
   const tokenLimit = maxTokens || modelCfg.maxTokens;
 
   let systemPrompt = assembler.assemble({ featureId, taskType: task, language, memoryContext, toolName });
-  if (modelKey === 'cs-careerprince') systemPrompt = hrc.inject(systemPrompt, task);
+  if (modelKey === 'cs-careerreasoning') systemPrompt = hrc.inject(systemPrompt, task);
   else systemPrompt = hrc.injectShort(systemPrompt, task);
 
   const fullMessages = [
@@ -309,7 +309,7 @@ async function* stream({
 }
 
 async function* _streamWithFallback({ modelKey, modelCfg, fullMessages, tokenLimit, task, combinedVault, keepSalary, startTime, _retried = false }) {
-  const guard = (modelKey === 'cs-careerchief' || modelKey === 'careerlm-nano')
+  const guard = (modelKey === 'cs-careerbriefing' || modelKey === 'careerlm-nano')
     ? new StreamingLeakGuard(120)
     : null;
 
@@ -356,10 +356,10 @@ async function* _streamWithFallback({ modelKey, modelCfg, fullMessages, tokenLim
             const r = guard.feed(token);
             if (r.action === 'abort') {
               aborted = true;
-              yield { type: 'model_switch', from: modelKey, to: 'cs-careerprince' };
-              // Retry with cs-careerprince
+              yield { type: 'model_switch', from: modelKey, to: 'cs-careerreasoning' };
+              // Retry with cs-careerreasoning
               yield* _streamWithFallback({
-                modelKey: 'cs-careerprince', modelCfg: MODELS['cs-careerprince'],
+                modelKey: 'cs-careerreasoning', modelCfg: MODELS['cs-careerreasoning'],
                 fullMessages, tokenLimit: Math.max(tokenLimit, 800),
                 task, combinedVault, keepSalary, startTime, _retried: true,
               });
@@ -379,7 +379,7 @@ async function* _streamWithFallback({ modelKey, modelCfg, fullMessages, tokenLim
       if (end.action === 'flush') yield { type: 'token', content: end.token };
       else if (end.action === 'aborted' && !_retried) {
         yield* _streamWithFallback({
-          modelKey: 'cs-careerprince', modelCfg: MODELS['cs-careerprince'],
+          modelKey: 'cs-careerreasoning', modelCfg: MODELS['cs-careerreasoning'],
           fullMessages, tokenLimit: Math.max(tokenLimit, 800),
           task, combinedVault, keepSalary, startTime, _retried: true,
         });

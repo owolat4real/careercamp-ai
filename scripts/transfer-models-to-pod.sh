@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# Copy the local custom Ollama models (cs-careerchief, cs-careerprince, cs-embed)
+# Copy the local custom Ollama models (cs-careerbriefing, cs-careerreasoning, cs-embed)
 # onto a freshly-provisioned RunPod GPU pod.
 #
-# cs-careerking is DELIBERATELY EXCLUDED from this script as of the 2026-08-07
-# multilingual upgrade (see models/Modelfile.cs-careerking, DEPLOY_RUNPOD.md
+# cs-careeradvisor is DELIBERATELY EXCLUDED from this script as of the 2026-08-07
+# multilingual upgrade (see models/Modelfile.cs-careeradvisor, DEPLOY_RUNPOD.md
 # step 3a): it's now `aya-expanse:32b`, a real PUBLIC Ollama library
 # model chosen for genuine 23-language coverage, not a custom fine-tune —
 # pull it directly ON THE POD instead (`ollama pull aya-expanse:32b`),
 # which is both simpler and far faster than uploading an estimated ~19GB
 # file over this machine's upload bandwidth via scp.
 #
-# The remaining 3 (cs-careerchief, cs-careerprince, cs-embed) genuinely ARE custom
+# The remaining 3 (cs-careerbriefing, cs-careerreasoning, cs-embed) genuinely ARE custom
 # fine-tunes with no public registry — there is no "ollama pull
-# cs-careerprince" for those. The only way to get them onto a new host is to
+# cs-careerreasoning" for those. The only way to get them onto a new host is to
 # copy the already-built model files this machine already has in
 # ~/.ollama/models.
 #
@@ -24,7 +24,7 @@
 #      that one is PTY-only and rejects both scripted commands and scp).
 #   2. Run this script with that pod's direct SSH host/port:
 #        ./transfer-models-to-pod.sh <pod-ip> <ssh-port> [ssh-key-path]
-#   3. Separately, on the pod itself, pull cs-careerking's real base
+#   3. Separately, on the pod itself, pull cs-careeradvisor's real base
 #      (see DEPLOY_RUNPOD.md step 3a) — this script does not do that part.
 #
 # What it does:
@@ -45,7 +45,7 @@ SSH_KEY="${3:-$HOME/.ssh/id_ed25519}"
 
 LOCAL_OLLAMA_DIR="$HOME/.ollama"
 STAGE_DIR="$HOME/cs-models-stage"
-MODELS=(cs-careerchief cs-careerprince cs-embed)
+MODELS=(cs-careerbriefing cs-careerreasoning cs-embed)
 
 echo "==> Checking local models exist..."
 for m in "${MODELS[@]}"; do
@@ -97,6 +97,6 @@ REMOTE_SIZE=$(ssh -i "$SSH_KEY" -p "$POD_PORT" "root@$POD_HOST" \
 echo "    Staged: $LOCAL_SIZE bytes | Pod: $REMOTE_SIZE bytes"
 
 echo "==> Done. On the pod, start Ollama with OLLAMA_MODELS=/workspace/ollama-models"
-echo "    and confirm these 3 models via 'ollama list'. cs-careerking is separate —"
-echo "    run 'ollama pull aya-expanse:32b && ollama create cs-careerking -f Modelfile.cs-careerking'"
+echo "    and confirm these 3 models via 'ollama list'. cs-careeradvisor is separate —"
+echo "    run 'ollama pull aya-expanse:32b && ollama create cs-careeradvisor -f Modelfile.cs-careeradvisor'"
 echo "    directly on the pod (see DEPLOY_RUNPOD.md step 3a/4)."

@@ -3,8 +3,8 @@
  * gpuResidency.js — Single-model-residency guard for 4 GB VRAM.
  *
  * On the RTX 3050 Laptop GPU (4096 MiB):
- *   - cs-careerchief + cs-careerprince together = ~2662 MiB → safe to coexist
- *   - ANY pair involving cs-careerking exceeds safe VRAM → must evict first
+ *   - cs-careerbriefing + cs-careerreasoning together = ~2662 MiB → safe to coexist
+ *   - ANY pair involving cs-careeradvisor exceeds safe VRAM → must evict first
  *
  * When a model swap is needed, the current resident is evicted by sending
  * keep_alive=0 to Ollama, which unloads it from VRAM immediately before
@@ -17,11 +17,11 @@ const axios = require('axios')
 const OLLAMA = process.env.CS_INFERENCE_URL || 'http://localhost:11434'
 
 // Pairs whose combined VRAM fits safely within 4 GB (with headroom for KV + reserve)
-// cs-careerchief ~716 MiB + cs-careerprince ~1946 MiB = 2662 MiB → 1434 MiB headroom ✓
+// cs-careerbriefing ~716 MiB + cs-careerreasoning ~1946 MiB = 2662 MiB → 1434 MiB headroom ✓
 const SAFE_COEXIST_PAIRS = [
-  new Set(['cs-careerchief', 'cs-careerprince']),
-  new Set(['cs-careerchief', 'careerlm-nano']),
-  new Set(['cs-careerprince', 'careerlm-nano']),
+  new Set(['cs-careerbriefing', 'cs-careerreasoning']),
+  new Set(['cs-careerbriefing', 'careerlm-nano']),
+  new Set(['cs-careerreasoning', 'careerlm-nano']),
 ]
 
 function canCoexist(modelA, modelB) {

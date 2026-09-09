@@ -75,7 +75,7 @@ function buildKnowledgeBase() {
       model:       cfg.model,
       streaming:   cfg.streaming,
       path:        `/features/${id.replace(/_/g, '-')}`,
-      plan:        cfg.model === 'cs-careerprince' ? 'pro' : 'free',
+      plan:        cfg.model === 'cs-careerreasoning' ? 'pro' : 'free',
     };
   });
 

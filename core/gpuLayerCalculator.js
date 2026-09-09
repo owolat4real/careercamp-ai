@@ -11,11 +11,11 @@
  *
  * RTX 3050 Laptop GPU — 4096 MiB total
  * ──────────────────────────────────────
- *   cs-careerchief  (Llama-3.2-1B,  Q4_K_M): ~716 MiB total →  16 layers × 28 MiB  → ALL fit
- *   cs-careerprince (Llama-3.2-3B,  Q4_K_M): ~1946 MiB total → 28 layers × 55 MiB  → ALL fit
- *   cs-careerking   (Mistral-7B,    Q4_K_M): ~4198 MiB total → 32 layers × 108 MiB → PARTIAL
+ *   cs-careerbriefing  (Llama-3.2-1B,  Q4_K_M): ~716 MiB total →  16 layers × 28 MiB  → ALL fit
+ *   cs-careerreasoning (Llama-3.2-3B,  Q4_K_M): ~1946 MiB total → 28 layers × 55 MiB  → ALL fit
+ *   cs-careeradvisor   (Mistral-7B,    Q4_K_M): ~4198 MiB total → 32 layers × 108 MiB → PARTIAL
  *
- * At 3962 MiB free (idle), cs-careerking at 8192 context:
+ * At 3962 MiB free (idle), cs-careeradvisor at 8192 context:
  *   KV cache: 0.021 × 8192 ≈ 172 MiB
  *   Usable:   3962 - 400(reserve) - 172(KV) = 3390 MiB
  *   Layers:   floor(3390 / 108) = 31 / 32  (97% GPU, 1 layer CPU)
@@ -23,11 +23,11 @@
  * 40-80GB single-GPU pod (real 2026-08-07 target hardware, exact card
  * not pinned here — this math is VRAM-driven, not card-name-driven)
  * ──────────────────────────────────────────────────────────────────
- *   cs-careerking (Aya-Expanse-32B, Q4_K_M): ~19GB estimated total → see the
+ *   cs-careeradvisor (Aya-Expanse-32B, Q4_K_M): ~19GB estimated total → see the
  *   MODEL_ARCH entry below for exactly which numbers are confirmed real
  *   vs honestly-flagged approximations (gated HF config.json couldn't be
  *   read directly). At this size the real headroom on a 40-80GB pod is
- *   large enough that num_gpu 99 (see Modelfile.cs-careerking -- let Ollama
+ *   large enough that num_gpu 99 (see Modelfile.cs-careeradvisor -- let Ollama
  *   auto-decide) is the real safety net; this calculator's precision
  *   matters far less here than it did for the tighter-fitting 70B this
  *   replaced.
@@ -38,22 +38,22 @@ const { getFreeVRAM } = require('./vramTuner')
 /* Real architecture: layer counts match HuggingFace config.json, per-layer
    MiB measured from Q4_K_M quant file size / transformer layers */
 const MODEL_ARCH = {
-  'cs-careerchief': {
+  'cs-careerbriefing': {
     totalLayers:    16,
     mbPerLayer:     28,      // ~448 MiB in layers; embeddings + norms add ~268 MiB
     kvCachePerToken: 0.008,  // MiB per token, Q8_0 KV cache (OLLAMA_KV_CACHE_TYPE=q8_0)
   },
-  'cs-careerprince': {
+  'cs-careerreasoning': {
     totalLayers:    28,
     mbPerLayer:     55,      // ~1540 MiB in layers; rest is embeddings + vocab
     kvCachePerToken: 0.014,
   },
-  // Real 2026-08-07 upgrade: cs-careerking moved Mistral-7B -> briefly
+  // Real 2026-08-07 upgrade: cs-careeradvisor moved Mistral-7B -> briefly
   // Llama-3.3-70B -> corrected same-day to CohereLabs/Aya-Expanse-32B
   // once real 23-language coverage was confirmed as a hard requirement
   // (Aya-101's real 101 languages was the first target but is a T5
   // encoder-decoder architecture llama.cpp/Ollama cannot run at all --
-  // see cs_fixed/models/Modelfile.cs-careerking's comment for the full real
+  // see cs_fixed/models/Modelfile.cs-careeradvisor's comment for the full real
   // chain of research behind this). This entry MUST ship together with
   // that pod-side model swap, not independently.
   //
@@ -73,7 +73,7 @@ const MODEL_ARCH = {
   // measured fact, though the real ~40-80GB VRAM headroom at this
   // model's real ~19GB size makes an error here low-stakes (num_gpu 99
   // in the Modelfile is the actual safety net regardless).
-  'cs-careerking': {
+  'cs-careeradvisor': {
     totalLayers:    40,
     mbPerLayer:     400,       // ~16000 MiB in layers; ~3000 MiB estimated embed/LM-head
     kvCachePerToken: 0.031,    // carried over from the 70B estimate, also unverified for this model
@@ -81,8 +81,8 @@ const MODEL_ARCH = {
   // Retained for any environment still actually running the original 7B
   // opus (e.g. a smaller/local dev box that never did either pod swap
   // above) -- register it under its real base-model name rather than
-  // overloading 'cs-careerking' for multiple different real models.
-  'cs-careerking-7b-legacy': {
+  // overloading 'cs-careeradvisor' for multiple different real models.
+  'cs-careeradvisor-7b-legacy': {
     totalLayers:    32,
     mbPerLayer:     108,     // ~3456 MiB in layers; rest is embeddings + LM head
     kvCachePerToken: 0.021,
@@ -91,7 +91,7 @@ const MODEL_ARCH = {
   // briefly set to before the multilingual correction above -- kept
   // (not deleted) in case a future decision reverts to it or runs it
   // alongside Aya Expanse under a different model name.
-  'cs-careerking-llama70b': {
+  'cs-careeradvisor-llama70b': {
     totalLayers:    80,
     mbPerLayer:     469,      // ~37500 MiB in layers; rest is embeddings + LM head
     kvCachePerToken: 0.031,
@@ -109,7 +109,7 @@ const MODEL_ARCH = {
 const SYSTEM_RESERVE_MB = 400
 
 /**
- * @param {string} modelName  Ollama model name (e.g. 'cs-careerking')
+ * @param {string} modelName  Ollama model name (e.g. 'cs-careeradvisor')
  * @param {number} contextTokens  KV context length to reserve for
  * @returns {Promise<number>}  num_gpu value to pass to Ollama
  */

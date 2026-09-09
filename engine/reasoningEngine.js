@@ -1,6 +1,6 @@
 'use strict';
 /**
- * REASONING ENGINE — Forces cs-careerprince to reason like a human career expert.
+ * REASONING ENGINE — Forces cs-careerreasoning to reason like a human career expert.
  * Chain-of-thought injection, ambiguity detection, and self-critique loops.
  */
 

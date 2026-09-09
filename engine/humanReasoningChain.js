@@ -1,8 +1,8 @@
 'use strict';
 /**
- * HUMAN REASONING CHAIN — Forces cs-careerprince to reason step-by-step
+ * HUMAN REASONING CHAIN — Forces cs-careerreasoning to reason step-by-step
  * before generating output, producing quality that rivals models 10× its size.
- * cs-careerchief gets simplified reasoning (cannot hold full HRC in context).
+ * cs-careerbriefing gets simplified reasoning (cannot hold full HRC in context).
  */
 
 const REASONING_TEMPLATES = {

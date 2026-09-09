@@ -58,7 +58,7 @@ def get_model(key: str):
 # assuming it already landed.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 VISION_MIN_FREE_MIB = 5000  # LLaVA-1.6-mistral-7B in 4-bit needs ~4GB + headroom
-MODELS_TO_EVICT_FOR_VISION = ["cs-careerking", "cs-careerprince", "cs-embed", "cs-careerchief"]
+MODELS_TO_EVICT_FOR_VISION = ["cs-careeradvisor", "cs-careerreasoning", "cs-embed", "cs-careerbriefing"]
 
 def _free_mib() -> int:
     import subprocess, re
@@ -120,7 +120,7 @@ def load_vision():
     """LLaVA vision model"""
     if "vision" in _models: return _models["vision"]
     # This 7B model's first load competes for VRAM with whatever Ollama
-    # models happen to be resident (cs-careerking/sonnet/haiku/embed/cs-careerqueen
+    # models happen to be resident (cs-careeradvisor/sonnet/haiku/embed/cs-careerqueen
     # aren't proactively evicted between requests, unlike svd_server.py's
     # generation path) - confirmed live: a real request here OOM'd with
     # under 30MiB free while Ollama held ~10GB+ across multiple models.
