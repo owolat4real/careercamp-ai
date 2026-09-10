@@ -29,30 +29,51 @@ echo "==> Waiting for ollama to accept requests..."
 until curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; do sleep 2; done
 echo "    ollama is up."
 
-if ! ollama list | grep -q "cs-careerreasoning"; then
+# Where Ollama actually keeps manifests/ and blobs/ — in the ollama/ollama
+# image this is /root/.ollama/models (NOT /root/.ollama). The backup
+# tarball (from backupCustomModels.sh) has ./blobs/ and ./manifests/ at
+# its root, so it must extract INTO the models dir.
+OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-/root/.ollama/models}"
+
+# The real backups predate the 2026-09-09 rename, so they contain
+# cs-sonnet / cs-haiku / cs-embed manifests, not the new names. Restore if
+# NEITHER the new nor the old reasoning-tier name is already present.
+if ! ollama list | grep -qE "cs-careerreasoning|cs-sonnet"; then
   if [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_S3_BUCKET:-}" ]; then
     BACKUP_KEY="${MODEL_BACKUP_KEY:-model-backups/cs-custom-models-2026-09-03.tar.gz}"
-    echo "==> Restoring cs-careerreasoning / cs-careerbriefing / cs-embed from s3://${AWS_S3_BUCKET}/${BACKUP_KEY} ..."
+    echo "==> Restoring custom fine-tuned models from s3://${AWS_S3_BUCKET}/${BACKUP_KEY} ..."
     aws s3 cp "s3://${AWS_S3_BUCKET}/${BACKUP_KEY}" /tmp/models-backup.tar.gz
-    mkdir -p /root/.ollama
-    tar -xzf /tmp/models-backup.tar.gz -C /root/.ollama
+    mkdir -p "$OLLAMA_MODELS_DIR"
+    tar -xzf /tmp/models-backup.tar.gz -C "$OLLAMA_MODELS_DIR"
     rm -f /tmp/models-backup.tar.gz
-    # Ollama needs restarting to notice manifests/blobs written directly
-    # to its data dir rather than through its own API.
+    # Ollama caches its model list — restart so it picks up manifests/blobs
+    # written straight to disk rather than through its own API.
     pkill -f "ollama serve" || true
     sleep 2
     ollama serve &
     until curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; do sleep 2; done
-    echo "    Restored. Now resident: $(ollama list | tr '\n' ' ')"
+    echo "    Restore extracted. Resident: $(ollama list | tr '\n' ' ')"
   else
     echo "!! AWS_ACCESS_KEY_ID / AWS_S3_BUCKET not set in this container group's Environment Variables --"
-    echo "!! cs-careerreasoning / cs-careerbriefing / cs-embed CANNOT be restored (they have no public"
-    echo "!! base model — see backupCustomModels.sh). Continuing without them; the app's own fallback"
-    echo "!! cascade (Groq/OpenRouter) will carry those requests instead."
+    echo "!! the custom fine-tuned models CANNOT be restored (no public base — see backupCustomModels.sh)."
+    echo "!! Continuing; the app's own fallback cascade (Groq/OpenRouter) carries those requests instead."
   fi
 else
-  echo "==> cs-careerreasoning already present (persistent volume?) — skipping restore."
+  echo "==> reasoning-tier model already present — skipping restore."
 fi
+
+# Map the pre-rename backup names to the names the app actually calls now
+# (ollama cp is cheap — new manifest, shared blobs). Idempotent: only runs
+# when the old name exists and the new one doesn't.
+if ollama list | grep -q "cs-sonnet" && ! ollama list | grep -q "cs-careerreasoning"; then
+  echo "==> ollama cp cs-sonnet -> cs-careerreasoning"
+  ollama cp cs-sonnet cs-careerreasoning
+fi
+if ollama list | grep -q "cs-haiku" && ! ollama list | grep -q "cs-careerbriefing"; then
+  echo "==> ollama cp cs-haiku -> cs-careerbriefing"
+  ollama cp cs-haiku cs-careerbriefing
+fi
+echo "==> Models now available: $(ollama list | awk 'NR>1{print $1}' | tr '\n' ' ')"
 
 if ! ollama list | grep -q "cs-careerqueen"; then
   echo "==> Pulling llava-phi3 (public model) for cs-careerqueen..."

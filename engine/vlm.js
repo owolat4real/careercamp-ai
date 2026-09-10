@@ -45,7 +45,11 @@ let ollamaVisionModel = null; // the actual pulled model name to use
 // separately — do not move it back above llava/moondream without first
 // confirming the hang is fixed, since a single bad request here is a
 // pod-wide outage, not a contained failure.
-const VISION_MODEL_PREFERENCE = ['llava', 'moondream', 'bakllava', 'avatarvid-2b'];
+// 'cs-careerqueen' first — that's the real pulled vision-model tag now
+// (renamed 2026-09-09 off 'llava-phi3', which is what the bare 'llava'
+// entry below used to match). Without this entry the substring match
+// below finds nothing and vision detection silently reports unavailable.
+const VISION_MODEL_PREFERENCE = ['cs-careerqueen', 'llava', 'moondream', 'bakllava', 'avatarvid-2b'];
 
 async function checkVisionModels() {
   try {

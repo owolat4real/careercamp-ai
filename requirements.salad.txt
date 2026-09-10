@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Trimmed Python deps for the SaladCloud all-in-one image (Dockerfile.salad).
+#
+# Dropped vs requirements.txt, matching the RunPod pod's own confirmed trim
+# (see DEPLOY_RUNPOD notes): api_server.py imports faster_whisper, NOT
+# openai-whisper -- and openai-whisper==20231117's legacy setup.py needs
+# pkg_resources, which the base image's newer setuptools no longer ships,
+# so it fails the build outright. pandas / scikit-learn / datasets are
+# likewise never imported by api_server.py.
+#   - openai-whisper   (unused; breaks the build)
+#   - datasets         (unused; large)
+#   - pandas           (unused)
+#   - scikit-learn     (unused)
+#
+# setuptools is pinned <81 first anyway (81+ dropped pkg_resources, which
+# a couple of transitive build steps still expect).
+# ═══════════════════════════════════════════════════════════════════════
+setuptools<81
+wheel
+
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.12
+pydantic==2.9.2
+
+# Core ML
+torch==2.4.1
+torchvision==0.19.1
+torchaudio==2.4.1
+transformers==4.45.1
+accelerate==0.34.2
+sentencepiece==0.2.0
+bitsandbytes==0.43.3
+
+# BERT / NLP
+sentence-transformers==3.1.1
+tokenizers==0.20.0
+
+# Vision (LLaVA)
+Pillow==10.4.0
+timm==1.0.9
+
+# STT
+faster-whisper==1.0.3
+
+# Search / web
+requests==2.32.3
+httpx==0.27.2
+aiohttp==3.10.5
+
+# Utilities
+numpy==1.26.4
+scipy==1.13.1
+tqdm==4.66.5
+python-dotenv==1.0.1

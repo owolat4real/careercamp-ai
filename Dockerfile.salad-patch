@@ -1,0 +1,19 @@
+# Thin patch layer over the already-built owo1232011/careerstudiomax:latest.
+# Fixes 3 bugs found on the first Salad deploy without a full 12.8GB rebuild:
+#   1. salad-entrypoint.sh extracted the model backup to /root/.ollama
+#      instead of /root/.ollama/models, so Ollama never saw the restored
+#      models.
+#   2. The Sept-3 backup predates the model rename — it holds cs-sonnet /
+#      cs-haiku, so the entrypoint now `ollama cp`s them to the new names.
+#   3. engine/vlm.js's vision-model match list still looked for 'llava',
+#      which no longer matches the renamed 'cs-careerqueen' tag.
+#
+# Build:  docker build -f Dockerfile.salad-patch -t owo1232011/careerstudiomax:latest .
+# Push:   docker push owo1232011/careerstudiomax:latest
+FROM owo1232011/careerstudiomax:latest
+
+COPY scripts/salad-entrypoint.sh /app/scripts/salad-entrypoint.sh
+COPY engine/vlm.js /app/engine/vlm.js
+RUN chmod +x /app/scripts/salad-entrypoint.sh
+
+# ENTRYPOINT is inherited from the base image — unchanged.
