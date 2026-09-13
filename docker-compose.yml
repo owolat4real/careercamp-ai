@@ -47,7 +47,12 @@ services:
       CAREERCAMP_API_KEY: "${CAREERCAMP_API_KEY:-}"
       CS_TRANSFORMER_API_KEY: "${CS_TRANSFORMER_API_KEY:-}"
 
-      INTERNAL_SECRET: "${INTERNAL_SECRET:-careercamp-internal-2025}"
+      # No hardcoded fallback -- a real value that's committed to a public
+      # repo isn't a secret. Leaving this unset means server.js's rate-limit
+      # bypass (x-internal header) simply never matches, which is the safe
+      # failure mode; the actual API auth (CAREERCAMP_API_KEY/etc.) is
+      # separate and already fails closed with no default.
+      INTERNAL_SECRET: "${INTERNAL_SECRET:-}"
 
     volumes:
       - ml_models:/app/models
