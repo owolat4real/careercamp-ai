@@ -46,6 +46,7 @@ const compression = require('compression');
 const http       = require('http');
 const axios      = require('axios');
 const gatewayAuth = require('./core/gatewayAuth');
+const { readWarmupState } = require('./core/modelWarmupState');
 
 const app  = express();
 const PORT = process.env.PORT || process.env.CAREERCAMP_PORT || 3002;
@@ -212,6 +213,19 @@ app.get('/health', async (req, res) => {
     version: '1.0.0',
     uptime:  process.uptime(),
     time:    new Date().toISOString(),
+    // 'status: ok' above means the PROCESS is up and responding -- it has
+    // never depended on any model being loaded and still doesn't. This
+    // field is a SEPARATE, additive signal for the Salad model-warmup
+    // background job (scripts/salad-model-warmup.sh /
+    // core/modelWarmupState.js, added 2026-09-15): 'warming' | 'ready' |
+    // 'degraded'. Salad's own startup probe is a plain TCP check on port
+    // 3002, not an HTTP call here, so this field doesn't affect whether
+    // the instance is considered started -- it's operational visibility,
+    // for a human or a future readiness check to consult if they want to
+    // know whether the LOCAL models specifically are ready yet, distinct
+    // from "is the gateway itself up" (always answered by this endpoint
+    // responding at all).
+    modelWarmup: readWarmupState(),
     engines: {
       bert:    careerBERT.status(),
       llm:     careerLM.status(),
@@ -420,34 +434,53 @@ app.use((err, req, res, _next) => {
 });
 
 // ── Boot ───────────────────────────────────────────────────
-async function boot() {
-  console.log('\n╔══════════════════════════════════════════════════════╗');
-  console.log('║  CareerCamp AI — Unique Career Intelligence          ║');
-  console.log('║  LLM · VLM · Voice · BERT · Multimodal · Internet   ║');
-  console.log('╚══════════════════════════════════════════════════════╝\n');
-
-  // GPU capacity audit — prints real layer counts before first request
-  await runStartupAudit();
+// 2026-09-15 (Salad startup-probe remediation): the TCP listener used to
+// bind only AFTER runStartupAudit() and all 6 engines' .init() calls
+// settled. Individually those are each bounded (a few seconds at most --
+// runStartupAudit() wraps a single nvidia-smi call with its own 5s
+// timeout; 5 of 6 engine inits carry their own 2-3s axios timeouts; the
+// remaining one, CareerBERT's local embeddings model load, has no
+// explicit timeout of its own but is wrapped in a try/catch that can
+// only ever resolve, not hang the process), but stacked in front of
+// server.listen() they still delayed Salad's TCP probe by a real, if
+// smaller, amount on top of the (much larger, separately fixed) model-
+// restore delay. None of this work affects whether the HTTP server can
+// accept connections -- it only populates internal status flags
+// (ollamaAvailable, modelStatus, etc.) that route handlers already check
+// per-request, with their own existing fallback/retry behavior for
+// exactly the "not ready yet" case (see engine/llm.js's
+// _scheduleOllamaRetry, for one). So: bind the port FIRST, then run this
+// startup work in the background -- it was never actually gating
+// correctness, only (unnecessarily) gating the TCP listener.
+function _runBackgroundStartupWork() {
+  runStartupAudit()
+    .then(() => Promise.allSettled([
+      careerBERT.init(),
+      careerLM.init(),
+      careerVision.init(),
+      careerVoice.init(),
+      internetEngine.init(),
+      contextEngine.init(),
+    ]))
+    .then((results) => {
+      const names = ['CareerBERT', 'CareerLM', 'CareerVision', 'CareerVoice', 'InternetEngine', 'ContextEngine'];
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') console.log(`  ✅ ${names[i]} ready`);
+        else console.warn(`  ⚠  ${names[i]} degraded: ${r.reason?.message?.slice(0, 60)}`);
+      });
+    })
+    .catch(e => console.error('[CareerCamp] Background engine init error:', e.message));
 
   // Warm local models (non-blocking — server starts regardless)
   warmAll().catch(() => {});
   startKeepWarm();  // heartbeat: ping cs-careerbriefing + cs-careerreasoning every 4 min to prevent VRAM unload
+}
 
-  // Initialise engines in parallel
-  const results = await Promise.allSettled([
-    careerBERT.init(),
-    careerLM.init(),
-    careerVision.init(),
-    careerVoice.init(),
-    internetEngine.init(),
-    contextEngine.init(),
-  ]);
-
-  results.forEach((r, i) => {
-    const names = ['CareerBERT', 'CareerLM', 'CareerVision', 'CareerVoice', 'InternetEngine', 'ContextEngine'];
-    if (r.status === 'fulfilled') console.log(`  ✅ ${names[i]} ready`);
-    else console.warn(`  ⚠  ${names[i]} degraded: ${r.reason?.message?.slice(0, 60)}`);
-  });
+function boot() {
+  console.log('\n╔══════════════════════════════════════════════════════╗');
+  console.log('║  CareerCamp AI — Unique Career Intelligence          ║');
+  console.log('║  LLM · VLM · Voice · BERT · Multimodal · Internet   ║');
+  console.log('╚══════════════════════════════════════════════════════╝\n');
 
   const server = http.createServer(app);
   server.listen(PORT, () => {
@@ -458,10 +491,38 @@ async function boot() {
     console.log(`       voice.careerstudiomax.com  → /v1/audio/*`);
     console.log(`       embed.careerstudiomax.com  → /v1/embeddings`);
     console.log(`       bert.careerstudiomax.com   → /v1/bert/*\n`);
+
+    _runBackgroundStartupWork();
   });
+
+  // Graceful shutdown (2026-09-15, Salad startup-probe remediation): this
+  // process is the container's real PID 1 after salad-entrypoint.sh's
+  // `exec node server.js` -- without an explicit handler, Node does not
+  // apply a default action to SIGTERM/SIGINT when running as PID 1 (a
+  // standard Linux/Docker behavior for PID 1 specifically), so the
+  // container runtime would otherwise wait out its full grace period and
+  // SIGKILL instead of shutting down promptly. This also matters now that
+  // a background model-warmup job (scripts/salad-model-warmup.sh) may
+  // still be running in the same container: once this process actually
+  // exits, the kernel tears down every other process left in the same PID
+  // namespace, including that job -- but only if this process exits
+  // promptly on a real termination signal instead of never noticing one.
+  let _shuttingDown = false;
+  function shutdown(signal) {
+    if (_shuttingDown) return;
+    _shuttingDown = true;
+    console.log(`\n[CareerCamp] ${signal} received — shutting down gracefully...`);
+    server.close(() => process.exit(0));
+    // Don't hang forever waiting for slow in-flight requests to drain.
+    setTimeout(() => process.exit(0), 10_000).unref();
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
 }
 
-boot().catch(e => {
+try {
+  boot();
+} catch (e) {
   console.error('[CareerCamp] Boot failed:', e.message);
   process.exit(1);
-});
+}

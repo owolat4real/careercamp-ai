@@ -44,12 +44,15 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.salad.tx
 
 COPY . .
 RUN mkdir -p models/.cache models/whisper \
-    && chmod +x scripts/salad-entrypoint.sh
+    && chmod +x scripts/salad-entrypoint.sh scripts/salad-model-warmup.sh
 
 EXPOSE 3002 3003 11434
 
-# Generous start-period — first boot restores a ~2GB model backup from S3
-# plus pulls llava-phi3, easily 3-5+ minutes depending on bandwidth.
+# 2026-09-15 (Salad startup-probe remediation): Node now binds port 3002
+# promptly -- the ~2GB S3 model restore + llava-phi3 pull run as a
+# background job (scripts/salad-model-warmup.sh) and no longer gate this.
+# --start-period is left generous anyway as harmless slack for a slow
+# cold GPU/driver init, not because /health itself waits on model restore.
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
   CMD curl -f http://localhost:${PORT:-3002}/health || exit 1
 
