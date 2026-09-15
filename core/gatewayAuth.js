@@ -36,26 +36,76 @@ function _safeEqual(a, b) {
 
 const MAX_CREDENTIAL_LENGTH = 512; // generous — real keys are ~50-60 chars; anything past this is malformed, not a real key
 
+// A fixed, over-length sentinel used ONLY to signal "the query transport
+// was used but its shape was structurally unsafe to inspect" from
+// extractPresented() to classify(), without inventing a second return
+// contract. Routed through classify()'s EXISTING length check, so it is
+// always reported as malformed_credential (not unknown_credential, and
+// never silently treated as though no query credential were presented at
+// all -- see the "distinguish missing from malformed" note on
+// extractPresented() below). Guaranteed to never collide with a real
+// configured secret: checkConfiguration() already refuses to boot with any
+// configured credential over MAX_CREDENTIAL_LENGTH, so no real secret can
+// ever equal or be mistaken for this sentinel.
+const MALFORMED_QUERY_SENTINEL = 'x'.repeat(MAX_CREDENTIAL_LENGTH + 1);
+
 // ── Log-safe URL redaction ──────────────────────────────────────────────
 // Shared by this module's own auth-failure warnings AND server.js's global
-// morgan access logger (via a custom :url token override) -- one regex,
+// morgan access logger (via a custom :url token override) -- one function,
 // one place, rather than two independent redaction implementations that
-// could drift. Redacts the *value* only, keeping "api_key=" so a log
-// reader can still see that transport was used, per CS-1 gateway auth
-// review Priority 1 (2026-09-15): "?api_key=..." must never reach any log
-// unredacted, on success, failure, OR when a different transport ends up
-// actually deciding the request (the query value can appear in the logged
-// URL even when it was never read for authorization).
+// could drift. Per CS-1 gateway auth review Priority 1 (2026-09-15):
+// "?api_key=..." must never reach any log unredacted, on success, failure,
+// OR when a different transport ends up actually deciding the request.
+//
+// STRUCTURAL fix (2026-09-15, second review remediation): the original
+// implementation matched the literal substring "api_key" in the raw URL
+// text via regex. That regex is blind to percent-encoding: a client (or an
+// attacker deliberately evading redaction) can spell the parameter name as
+// `%61pi_key`, `api%5fkey`, a fully percent-encoded name, or percent-
+// encoded brackets (`api_key%5B0%5D`) -- Express's own query parser
+// decodes all of these down to the literal key `api_key` before
+// extractPresented() ever sees them, so authentication succeeds
+// identically either way, but the OLD regex never matched the raw,
+// still-encoded text, so the credential reached the log completely
+// unredacted. Parsing with the built-in URLSearchParams (which performs
+// the same percent-decoding on parameter NAMES, not just values, as any
+// standard query-string parser including Express's) and comparing the
+// DECODED key -- rather than pattern-matching the raw, possibly-encoded
+// text -- closes this for every encoding variant at once, without
+// enumerating them. This never touches req.url/req.originalUrl/routing;
+// it only ever transforms a throwaway string copy for a log line.
 function redactUrl(url) {
   if (typeof url !== 'string' || !url) return url;
-  // Normalizes any api_key transport variant -- plain (?api_key=x), repeated
-  // (&api_key=x), or a structured/bracket key name (?api_key[toString]=x,
-  // itself never a valid credential, see extractPresented's own handling of
-  // this shape) -- down to exactly "api_key=[REDACTED]". Discarding any
-  // bracket content rather than merely blanking the value keeps an
-  // attacker-chosen key name (which could itself be arbitrary text) out of
-  // the log too, not just the credential value.
-  return url.replace(/([?&])api_key(?:\[[^\]]*\])?=[^&]*/gi, '$1api_key=[REDACTED]');
+  const qIndex = url.indexOf('?');
+  if (qIndex === -1) return url;
+  const pathname = url.slice(0, qIndex);
+  let params;
+  try {
+    params = new URLSearchParams(url.slice(qIndex + 1));
+  } catch (_) {
+    // URLSearchParams does not throw on arbitrary input in practice, but
+    // fail safe rather than ever fall back to logging the raw, unparsed
+    // query string if it somehow did.
+    return pathname + '?[query redacted: unparsable]';
+  }
+  const parts = [];
+  for (const [key, value] of params) {
+    // Case-sensitive on purpose: req.query.api_key (what extractPresented
+    // actually reads) is itself a case-sensitive property lookup, so
+    // `API_KEY` is genuinely a different, non-authenticating parameter --
+    // redaction mirrors real authentication semantics exactly rather than
+    // over-redacting things that were never credential-bearing.
+    // Bracket-descendant forms (api_key[0], api_key[toString], etc.) all
+    // collapse to ONE top-level `api_key` property on req.query regardless
+    // of nesting depth, so matching the key prefix "api_key[" here covers
+    // every descendant shape without needing to parse the brackets myself.
+    if (key === 'api_key' || key.startsWith('api_key[')) {
+      parts.push(`${encodeURIComponent(key)}=[REDACTED]`);
+    } else {
+      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+    }
+  }
+  return parts.length ? `${pathname}?${parts.join('&')}` : pathname;
 }
 
 // ── Credential classes ─────────────────────────────────────────────────
@@ -189,21 +239,38 @@ function extractPresented(req) {
   const headers = (req && req.headers) || {};
   const fromAuth = String(headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (fromAuth) return fromAuth;
-  // Express's query parser (qs) turns `?api_key[toString]=x` into a plain
-  // OBJECT `{ toString: 'x' }` -- a naive `String(fromQuery)` then invokes
-  // that object's own `toString` PROPERTY (a string, not a function) as a
-  // function call, throwing a TypeError that used to reach the server's
-  // generic error handler as an HTTP 500. Strings (the normal case) and
-  // arrays (repeated `?api_key=a&api_key=b`, or the single-element
-  // `?api_key[]=x` form) are safe to stringify via a built-in that never
-  // invokes attacker-supplied properties; anything else (a structured/
-  // bracket-object query value) is treated as though no query credential
-  // were presented at all, falling through to x-api-key rather than ever
-  // being coerced. Fixed 2026-09-15, CS-1 gateway auth review Priority 4.
+  // Type-safe query handling (2026-09-15, second review remediation --
+  // supersedes the first pass, which only rejected a top-level object and
+  // still called String() on arrays; an array element can itself be an
+  // object whose own `toString` PROPERTY shadows the method, e.g.
+  // `?api_key[0][toString]=x` parses to `[{toString:'x'}]`, and
+  // Array.prototype.toString/join() internally stringifies each element,
+  // throwing exactly the same way a bare object did).
+  //
+  // Strict policy, in order:
+  //   string  -> the candidate credential (empty string treated as absent,
+  //              same as today -- falls through to x-api-key below)
+  //   array/object/number/boolean -> REJECTED outright as malformed,
+  //              without ever calling String()/.toString() on the value
+  //              or inspecting its contents. No confirmed CareerStudioMax
+  //              consumer sends repeated or bracketed ?api_key= query
+  //              parameters (every real caller uses Authorization or
+  //              x-api-key -- see cs_fixed compatibility notes on this
+  //              task), so there is no compatibility reason to salvage a
+  //              single-element array or otherwise inspect structured
+  //              input; rejecting all of it is both simpler and safer.
+  //   undefined/null -> missing, falls through to x-api-key below
+  //
+  // A malformed shape short-circuits here (mirrors how an "unknown"
+  // string value in this same slot already short-circuits rather than
+  // falling through) rather than being silently treated as absent --
+  // see MALFORMED_QUERY_SENTINEL's own comment for how this is signalled
+  // through to classify() without a second return contract.
   const rawQuery = req && req.query ? req.query.api_key : undefined;
-  if (typeof rawQuery === 'string' || Array.isArray(rawQuery)) {
-    const fromQuery = String(rawQuery);
-    if (fromQuery) return fromQuery;
+  if (typeof rawQuery === 'string') {
+    if (rawQuery) return rawQuery;
+  } else if (rawQuery !== undefined && rawQuery !== null) {
+    return MALFORMED_QUERY_SENTINEL;
   }
   return String(headers['x-api-key'] || '');
 }

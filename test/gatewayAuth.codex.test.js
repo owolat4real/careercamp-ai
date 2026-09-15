@@ -112,7 +112,17 @@ test('real Node header parsing and complete conflict precedence', async () => {
       [{ Authorization: [`Bearer ${values.transformer}`, `Bearer ${values.camp}`] }, p, 403],
       [{ Authorization: [`Bearer ${values.camp}`, `Bearer ${values.transformer}`] }, p, 200],
       [{}, p + '?api_key=' + values.camp + '&api_key=' + values.transformer, 401],
-      [{}, p + '?api_key[]=' + values.camp, 200],
+      // Changed 2026-09-15 (second review remediation): production behavior
+      // deliberately made MORE restrictive -- a single-element query array
+      // (`?api_key[]=x`) used to be salvaged via String([x]) === 'x' and
+      // authenticate normally. It is now rejected outright as malformed,
+      // along with every other array/object query shape, since no
+      // confirmed CareerStudioMax caller sends repeated or bracketed
+      // ?api_key= query parameters at all (every real caller uses
+      // Authorization or x-api-key) and inspecting array elements is
+      // exactly what the previous fix got wrong (see the
+      // api_key[0][toString] regressions below).
+      [{}, p + '?api_key[]=' + values.camp, 401],
       [{ 'x-api-key': 'x'.repeat(10000) }, p, 401],
       [{ 'x-api-key': 'x'.repeat(20000) }, p, 431],
     ];

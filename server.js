@@ -73,6 +73,19 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // themselves are never mutated, so routing and query parsing elsewhere are
 // unaffected.
 morgan.token('url', (req) => gatewayAuth.redactUrl(req.originalUrl || req.url));
+// :referrer is a SEPARATE morgan token from :url -- 'combined' logs it
+// independently (a Referer header is itself a URL, and can just as easily
+// carry a credential-bearing "?api_key=..." if the request arrived by
+// following a link from a page whose own URL had one). Default morgan
+// behavior returns the header verbatim; redacting it the same way as :url
+// closes this second, independent path a query credential could reach the
+// access log through. Found during the second independent gateway auth
+// review (2026-09-15); undefined when no Referer header was sent, matching
+// morgan's own default token's return contract exactly.
+morgan.token('referrer', (req) => {
+  const referrer = req.headers.referer || req.headers.referrer;
+  return referrer ? gatewayAuth.redactUrl(referrer) : referrer;
+});
 app.use(morgan('combined', { skip: (req) => req.url === '/health' }));
 
 // Rate limiting — generous limits for internal use
