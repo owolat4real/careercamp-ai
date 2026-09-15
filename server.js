@@ -121,30 +121,40 @@ app.locals.engines = {
 
 // ── API key authentication ─────────────────────────────────
 // This gateway is reachable over a public Cloudflare tunnel, so an empty
-// validKeys list must NEVER mean "let everyone in" — that was a real bug:
-// before any key existed in this process's env, every request (including
-// ones with no Authorization header at all) was silently allowed through.
-// Now a missing configuration fails CLOSED instead of open.
-const VALID_GATEWAY_KEYS = [
-  process.env.CAREERCAMP_API_KEY || '',
-  process.env.CS_TRANSFORMER_API_KEY || '',
-  process.env.CAREERCAMP_SECRET_KEY || '',
-].filter(Boolean);
+// credential configuration must NEVER mean "let everyone in" — that was a
+// real bug: before any key existed in this process's env, every request
+// (including ones with no Authorization header at all) was silently
+// allowed through. Now a missing configuration fails CLOSED instead of open.
+//
+// Purpose-specific hardening (see core/gatewayAuth.js's own header comment
+// for the full rationale): CAREERCAMP_API_KEY / CS_TRANSFORMER_API_KEY /
+// CAREERCAMP_SECRET_KEY used to be checked as `VALID_GATEWAY_KEYS.some(k =>
+// k === key)` -- ANY one of the three granting IDENTICAL access to nearly
+// every route below. That defeated purpose isolation: rotating just one of
+// the three achieved nothing, since the other two still unlocked the same
+// surface. Each route family below now names exactly which credential
+// class(es) its real, source-confirmed CareerStudioMax consumers use --
+// see the route-to-credential matrix in that task's own report for the
+// evidence behind each choice.
+const gatewayAuth = require('./core/gatewayAuth');
 
-if (!VALID_GATEWAY_KEYS.length) {
-  console.error('[FATAL] No API key configured (CAREERCAMP_API_KEY / CS_TRANSFORMER_API_KEY / CAREERCAMP_SECRET_KEY). Refusing to start with all endpoints unauthenticated.');
+const _gwConfig = gatewayAuth.checkConfiguration();
+if (!_gwConfig.ok) {
+  console.error(
+    `[GATEWAY-AUTH] FATAL: ${_gwConfig.reason}` +
+    (_gwConfig.detail ? ` (${_gwConfig.detail.join(', ')})` : '') +
+    '. Refusing to start with undefined/ambiguous authorization.'
+  );
   process.exit(1);
 }
 
-function apiKeyAuth(req, res, next) {
-  const key = (req.headers.authorization || '').replace('Bearer ', '') ||
-              req.query.api_key || req.headers['x-api-key'];
-
-  if (VALID_GATEWAY_KEYS.some(k => k === key)) {
-    return next();
-  }
-  res.status(401).json({ error: { message: 'Invalid API key', type: 'authentication_error', code: 401 } });
-}
+// Credential classes: 'secret' = CAREERCAMP_SECRET_KEY (privileged/internal),
+// 'camp' = CAREERCAMP_API_KEY (general CareerCamp API capabilities),
+// 'transformer' = CS_TRANSFORMER_API_KEY (Transformer/STT).
+const authInternal   = gatewayAuth.authorize(['secret']);              // privileged-only: no confirmed consumer today: diagnostics + the v2.0 platform routes' sensitive PII/memory/ethics surface
+const authCampOrCore = gatewayAuth.authorize(['secret', 'camp']);      // /v1/models, chat, embeddings — confirmed callers use either
+const authCamp       = gatewayAuth.authorize(['camp']);                // vision, BERT, search, /api/show — confirmed CAREERCAMP_API_KEY-only callers
+const authAudio      = gatewayAuth.authorize(['camp', 'transformer']); // /v1/audio/* — careercamp-ext.js (camp) AND brain.js's STT path (transformer) both confirmed live
 
 // ── Health & status ────────────────────────────────────────
 // Real gap found live (2026-08-28): this response never reported SVD/
@@ -204,7 +214,7 @@ app.get('/health', async (req, res) => {
 // through to Ollama's own native endpoint (OLLAMA_URL, same var
 // engine/llm.js already uses), not a reimplementation.
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-app.post('/api/show', apiKeyAuth, async (req, res) => {
+app.post('/api/show', authCamp, async (req, res) => {
   try {
     const r = await axios.post(`${OLLAMA_URL}/api/show`, req.body, { timeout: 8000 });
     res.json(r.data);
@@ -247,20 +257,31 @@ app.get('/v1', (req, res) => {
   });
 });
 
-app.get('/v1/models', apiKeyAuth, (req, res, next) => {
+app.get('/v1/models', authCampOrCore, (req, res, next) => {
   req.engines = app.locals.engines;
   next();
 }, modelsRoute);
 
 // ── OpenAI-compatible routes ───────────────────────────────
-app.use('/v1/chat/completions',  apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, completionsRoute);
-app.use('/v1/embeddings',        apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, embeddingsRoute);
-app.use('/v1/images',            apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, visionRoute);
-app.use('/v1/audio',             apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, audioRoute);
+// chat/embeddings: confirmed CareerStudioMax callers (cs_fixed's
+// camp-client.js, admin-server.js's pingProvider) use CAREERCAMP_API_KEY,
+// and aiEnvironment.js's primaryKey chain resolves to CAREERCAMP_SECRET_KEY
+// for /v1/models -- both are legitimate here.
+app.use('/v1/chat/completions',  authCampOrCore, (req, _, next) => { req.engines = app.locals.engines; next(); }, completionsRoute);
+app.use('/v1/embeddings',        authCampOrCore, (req, _, next) => { req.engines = app.locals.engines; next(); }, embeddingsRoute);
+// vision: only CAREERCAMP_API_KEY confirmed (middleware/brain.js, careercamp-ext.js)
+app.use('/v1/images',            authCamp, (req, _, next) => { req.engines = app.locals.engines; next(); }, visionRoute);
+// audio: BOTH confirmed live -- careercamp-ext.js uses CAREERCAMP_API_KEY for
+// transcriptions/speech/interview-analyze; middleware/brain.js's STT path
+// uses CS_TRANSFORMER_API_KEY (as x-api-key) for transcriptions specifically.
+app.use('/v1/audio',             authAudio, (req, _, next) => { req.engines = app.locals.engines; next(); }, audioRoute);
 
 // ── CareerCamp-specific routes ─────────────────────────────
-app.use('/v1/bert',   apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, bertRoute);
-app.use('/v1/agent',  apiKeyAuth, (req, _, next) => { req.engines = app.locals.engines; next(); }, agentRoute);
+// bert: only CAREERCAMP_API_KEY confirmed (careercamp-ext.js)
+app.use('/v1/bert',   authCamp, (req, _, next) => { req.engines = app.locals.engines; next(); }, bertRoute);
+// agent: no confirmed CareerStudioMax caller today -- privileged-only default,
+// consistent with the other unused-but-sensitive v2.0 platform routes below.
+app.use('/v1/agent',  authInternal, (req, _, next) => { req.engines = app.locals.engines; next(); }, agentRoute);
 
 // ── Self-hosted web search (SearXNG) ───────────────────────
 // Real, live-caught gap (2026-09-06): this gateway's own /health
@@ -271,11 +292,12 @@ app.use('/v1/agent',  apiKeyAuth, (req, _, next) => { req.engines = app.locals.e
 // anywhere. SearXNG (open-source metasearch engine, /workspace/searxng-src)
 // now runs locally on this pod (127.0.0.1:8888, started by
 // scripts/start-all-with-recovery.sh) -- this route is the one way to
-// reach it, reusing apiKeyAuth rather than exposing SearXNG's own port
-// directly (it has no auth of its own, and a public RunPod proxy port
-// with zero auth would let anyone who found the URL use this pod as a
-// free anonymous search proxy).
-app.get('/v1/search', apiKeyAuth, async (req, res) => {
+// reach it, reusing the centralized gateway auth rather than exposing
+// SearXNG's own port directly (it has no auth of its own, and a public
+// RunPod proxy port with zero auth would let anyone who found the URL use
+// this pod as a free anonymous search proxy). CAREERCAMP_API_KEY only --
+// confirmed caller is cs_fixed's services/search.js.
+app.get('/v1/search', authCamp, async (req, res) => {
   const q = String(req.query.q || '').slice(0, 500);
   if (!q) return res.status(400).json({ error: { message: 'q is required', type: 'invalid_request_error', code: 400 } });
   try {
@@ -299,18 +321,27 @@ app.get('/v1/search', apiKeyAuth, async (req, res) => {
 // ever reachable at localhost:3002, but a real hole once it gets a public
 // IP on a GPU pod (see careercamp-ai/docker-compose.yml) — anyone who found
 // the URL could hit them for free, including /v1/memory and /v1/developer.
-app.use('/v1/infer',      apiKeyAuth, inferenceRoute);
-app.use('/v1/features',   apiKeyAuth, featuresRoute);
-app.use('/v1/tools',      apiKeyAuth, toolsRoute);
-app.use('/v1/memory',     apiKeyAuth, memoryRoute);
-app.use('/v1/developer',  apiKeyAuth, developerRoute);
-app.use('/v1/camp',       apiKeyAuth, campRoute);     // 274-feature map pipeline (PII+memory+ethics+reasoning)
+// No confirmed CareerStudioMax caller exists for any of these 6 today (a
+// full grep of cs_fixed found none) -- privileged-only ('secret' class)
+// keeps them reachable for whatever intended future/partner caller they
+// were built for, without handing that access to the narrower, currently
+// externally-facing camp/transformer credentials. /v1/camp specifically
+// fronts a "274-feature map pipeline (PII+memory+ethics+reasoning)" --
+// exactly the kind of sensitive surface that should default to the most
+// privileged credential, not the most broadly distributed one.
+app.use('/v1/infer',      authInternal, inferenceRoute);
+app.use('/v1/features',   authInternal, featuresRoute);
+app.use('/v1/tools',      authInternal, toolsRoute);
+app.use('/v1/memory',     authInternal, memoryRoute);
+app.use('/v1/developer',  authInternal, developerRoute);
+app.use('/v1/camp',       authInternal, campRoute);
 
-// GPU Resource Manager status — internal use
-app.get('/v1/gpu-status', async (req, res) => {
-  const key   = req.headers['x-api-key'] || (req.headers.authorization || '').replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (valid && key !== valid) return res.status(401).json({ error: 'unauthorized' });
+// GPU Resource Manager status — internal use. No confirmed CareerStudioMax
+// caller; previously a standalone single-value check accepting
+// CS_TRANSFORMER_API_KEY OR CAREERCAMP_API_KEY with no route-family
+// isolation at all. Now routed through the same centralized, privileged-
+// only policy as the v2.0 platform routes above.
+app.get('/v1/gpu-status', authInternal, async (req, res) => {
   try {
     const freeVramMB = await getFreeVRAM();
     res.json({
@@ -325,23 +356,17 @@ app.get('/v1/gpu-status', async (req, res) => {
 });
 
 // Performance stats — internal use
-app.get('/v1/perf', (req, res) => {
-  const key   = req.headers['x-api-key'] || (req.headers.authorization || '').replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (valid && key !== valid) return res.status(401).json({ error: 'unauthorized' });
+app.get('/v1/perf', authInternal, (req, res) => {
   res.json({ success: true, ...perfMonitor.getStats() });
 });
 
-// Aggregate metrics endpoint (no auth — already gated inside router)
-app.get('/metrics', (req, res) => {
-  const key = req.headers['x-api-key'] || req.headers.authorization?.replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (valid && key !== valid) return res.status(401).json({ error: 'unauthorized' });
+// Aggregate metrics endpoint
+app.get('/metrics', authInternal, (req, res) => {
   res.json({ success: true, ...metrics.getDetailed() });
 });
 
 // ── Vision endpoint alias ──────────────────────────────────
-app.post('/v1/vision/analyze', apiKeyAuth, (req, res, next) => {
+app.post('/v1/vision/analyze', authCamp, (req, res, next) => {
   req.engines = app.locals.engines;
   req.url     = '/analyze';
   visionRoute(req, res, next);
