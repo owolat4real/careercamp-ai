@@ -15,6 +15,24 @@
 #      its own background job (new file: scripts/salad-model-warmup.sh)
 #      with its own bounded timeouts and non-fatal error handling; Node
 #      starts immediately after Ollama's own base API responds.
+#   5. (2026-09-16, production incident) The :5f2baaa patch image built
+#      from bug #4 above crashed on boot with MODULE_NOT_FOUND: this
+#      COPY list carried the NEW server.js (which unconditionally does
+#      `require('./core/gatewayAuth')` at the top, added by the CS-1
+#      gateway-auth hardening work) onto the base image's filesystem,
+#      which was built from commit 6b20bb7 -- well before gatewayAuth.js
+#      existed at all. Root cause confirmed via `git cat-file -e
+#      6b20bb7:core/gatewayAuth.js` (absent) vs `5f2baaa:core/gatewayAuth.js`
+#      (present), and independently by diffing every file server.js
+#      requires between 6b20bb7 and 5f2baaa -- gatewayAuth.js was the only
+#      one both new AND missing from this COPY list (modelWarmupState.js
+#      is also new since 6b20bb7 but was already correctly listed below).
+#      gatewayAuth.js itself only requires Node's built-in `crypto` -- no
+#      further transitive gap. This is exactly the failure mode bug #4's
+#      own patch-vs-rebuild tradeoff risks: a partial file overlay is only
+#      safe as long as every NEW local dependency the overlaid files pull
+#      in is also in this COPY list, and this one slipped through because
+#      it's a new top-level require, not a change to an existing file.
 #
 # Build:  docker build -f Dockerfile.salad-patch -t owo1232011/careerstudiomax:latest .
 # Push:   docker push owo1232011/careerstudiomax:latest
@@ -24,6 +42,7 @@ COPY scripts/salad-entrypoint.sh /app/scripts/salad-entrypoint.sh
 COPY scripts/salad-model-warmup.sh /app/scripts/salad-model-warmup.sh
 COPY engine/vlm.js /app/engine/vlm.js
 COPY core/modelWarmupState.js /app/core/modelWarmupState.js
+COPY core/gatewayAuth.js /app/core/gatewayAuth.js
 COPY server.js /app/server.js
 RUN chmod +x /app/scripts/salad-entrypoint.sh /app/scripts/salad-model-warmup.sh
 
