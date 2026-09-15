@@ -9,13 +9,13 @@ const { MemoryInSaver } = require('../engine/memoryInSaver');
 
 const mem = new MemoryInSaver();
 
-function apiKeyGuard(req, res, next) {
-  const key = req.headers['x-api-key'] || req.headers.authorization?.replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (!valid || key !== valid) return res.status(401).json({ error: 'unauthorized' });
-  next();
-}
-
+// Auth: enforced by core/gatewayAuth.js's centralized `authorize(['secret'])`
+// policy at this router's mount point in server.js. A router-local
+// apiKeyGuard checking CS_TRANSFORMER_API_KEY/CAREERCAMP_API_KEY used to
+// live here too -- removed 2026-09-15 (CS-1 gateway auth review) because it
+// conflicted with the outer 'secret'-class policy. See routes/inference.js's
+// identical comment for the full rationale. requireUserId below is unrelated
+// business validation (not a gateway credential check) and stays as-is.
 function requireUserId(req, res, next) {
   const userId = req.params.userId || req.body?.userId || req.query?.userId;
   if (!userId) return res.status(400).json({ error: 'userId is required' });
@@ -24,7 +24,7 @@ function requireUserId(req, res, next) {
 }
 
 /* GET /v1/memory/:userId — read memory */
-router.get('/:userId', apiKeyGuard, requireUserId, async (req, res) => {
+router.get('/:userId', requireUserId, async (req, res) => {
   try {
     const userMemory = await mem.get(req.userId);
     if (!userMemory) return res.json({ success: true, userId: req.userId, memory: null, hasMemory: false });
@@ -41,7 +41,7 @@ router.get('/:userId', apiKeyGuard, requireUserId, async (req, res) => {
 });
 
 /* POST /v1/memory/:userId — update memory fields */
-router.post('/:userId', apiKeyGuard, requireUserId, async (req, res) => {
+router.post('/:userId', requireUserId, async (req, res) => {
   const { updates } = req.body;
   if (!updates || typeof updates !== 'object') {
     return res.status(400).json({ error: 'updates object is required' });
@@ -56,7 +56,7 @@ router.post('/:userId', apiKeyGuard, requireUserId, async (req, res) => {
 });
 
 /* DELETE /v1/memory/:userId — clear memory */
-router.delete('/:userId', apiKeyGuard, requireUserId, async (req, res) => {
+router.delete('/:userId', requireUserId, async (req, res) => {
   try {
     await mem.clear(req.userId);
     res.json({ success: true, userId: req.userId, cleared: true });
@@ -66,7 +66,7 @@ router.delete('/:userId', apiKeyGuard, requireUserId, async (req, res) => {
 });
 
 /* POST /v1/memory/:userId/extract — extract and save facts from a conversation */
-router.post('/:userId/extract', apiKeyGuard, requireUserId, async (req, res) => {
+router.post('/:userId/extract', requireUserId, async (req, res) => {
   const { messages } = req.body;
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'messages array is required' });

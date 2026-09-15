@@ -253,12 +253,19 @@ Remove: greetings, questions, generic chat.`,
 };
 
 /* ── AUTH ────────────────────────────────────────────────────────── */
-function apiKeyGuard(req, res, next) {
-  const key   = req.headers['x-api-key'] || (req.headers.authorization || '').replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (!valid || key === valid) return next();
-  res.status(401).json({ error: 'unauthorized' });
-}
+// Enforced by core/gatewayAuth.js's centralized `authorize(['secret'])`
+// policy at this router's mount point in server.js. A router-local
+// apiKeyGuard used to additionally gate the 3 routes below -- removed
+// 2026-09-15 (CS-1 gateway auth review) for two independent reasons: (1) it
+// checked CS_TRANSFORMER_API_KEY/CAREERCAMP_API_KEY, conflicting with the
+// outer 'secret'-class policy exactly like the other 5 v2.0-platform
+// routers (see routes/inference.js's identical comment); (2) its own logic
+// was also a real, separate fail-OPEN bug -- `if (!valid || key === valid)
+// return next()` calls next() whenever NEITHER legacy credential was
+// configured at all (`!valid` true), not just on a correct match. That bug
+// was masked in production by the outer policy always running first, but
+// removing the dead function removes the landmine entirely rather than
+// leaving it to be rediscovered by a future refactor.
 
 /* ── LOCAL OLLAMA CALL ───────────────────────────────────────────── */
 // wantsJson (2026-08-28 fix): live-caught "The AI engine returned an
@@ -605,13 +612,13 @@ async function localInfer({ userInput, task, maxTokens }) {
 }
 
 /* ── GET /v1/camp/:featureId — feature info ──────────────────────── */
-router.get('/:featureId', apiKeyGuard, (req, res) => {
+router.get('/:featureId', (req, res) => {
   const feature = getFeature(req.params.featureId);
   res.json({ featureId: req.params.featureId, ...feature, knownFeature: !!FEATURE_MAP[req.params.featureId] });
 });
 
 /* ── POST /v1/camp/:featureId — full pipeline inference ─────────── */
-router.post('/:featureId', apiKeyGuard, async (req, res) => {
+router.post('/:featureId', async (req, res) => {
   const t0          = Date.now();
   const { featureId } = req.params;
   const {
@@ -919,7 +926,7 @@ router.post('/:featureId', apiKeyGuard, async (req, res) => {
 });
 
 /* ── GET /v1/camp — list all 274 features ────────────────────────── */
-router.get('/', apiKeyGuard, (req, res) => {
+router.get('/', (req, res) => {
   const features = Object.entries(FEATURE_MAP).map(([id, cfg]) => ({
     id, model: cfg.model, task: cfg.task, maxTokens: cfg.maxTokens,
     streaming: cfg.streaming, piiScrub: cfg.piiScrub,

@@ -7,15 +7,16 @@ const express  = require('express');
 const router   = express.Router();
 const { infer, stream } = require('../engine/inferenceEngine');
 
-function apiKeyGuard(req, res, next) {
-  const key = req.headers['x-api-key'] || req.headers.authorization?.replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (!valid || key !== valid) return res.status(401).json({ error: 'unauthorized' });
-  next();
-}
-
-/* POST /v1/infer — blocking inference */
-router.post('/', apiKeyGuard, async (req, res) => {
+// Auth: enforced by core/gatewayAuth.js's centralized `authorize(['secret'])`
+// policy at the mount point in server.js (`app.use('/v1/infer', authInternal,
+// inferenceRoute)`). A router-local apiKeyGuard checking CS_TRANSFORMER_API_KEY
+// / CAREERCAMP_API_KEY used to live here too -- removed 2026-09-15 (CS-1 gateway
+// auth review) because it silently rejected the outer policy's intended
+// 'secret'-class caller with a second, conflicting credential check. Do not
+// re-add a route-local credential comparison here; extend the outer policy
+// in server.js instead so there remains exactly one authorization decision
+// per request.
+router.post('/', async (req, res) => {
   const {
     messages, userInput, userId, featureId, task,
     language, toolName, maxTokens, forceModel, schema,

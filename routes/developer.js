@@ -1,26 +1,33 @@
 'use strict';
 /**
  * /v1/developer — Developer portal: API docs, model status, metrics, warm status.
- * No auth on GET /status and GET /health so monitoring tools can ping freely.
+ * Every route here requires the outer 'secret'-class gateway credential (see
+ * the auth comment below) -- there is no unauthenticated route in this file.
+ * External monitoring should use the top-level GET /health instead, which
+ * remains genuinely public.
  */
 const express = require('express');
 const router  = express.Router();
 const { metrics, TASK_MODELS, MODELS } = require('../engine/inferenceEngine');
 const { getWarmStatus, quickPing }     = require('../engine/modelWarmer');
 
-function apiKeyGuard(req, res, next) {
-  const key = req.headers['x-api-key'] || req.headers.authorization?.replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (!valid || key !== valid) return res.status(401).json({ error: 'unauthorized' });
-  next();
-}
+// Auth: enforced by core/gatewayAuth.js's centralized `authorize(['secret'])`
+// policy at this router's mount point in server.js -- applies to EVERY route
+// below, including /health, /status and /docs (their own comments below
+// predate that outer wrapping and are now stale: nothing under /v1/developer
+// is actually reachable without the 'secret' credential any more). A
+// router-local apiKeyGuard checking CS_TRANSFORMER_API_KEY/CAREERCAMP_API_KEY
+// used to additionally gate /metrics, /ping/:model and /task-models --
+// removed 2026-09-15 (CS-1 gateway auth review) because it conflicted with
+// the outer 'secret'-class policy. See routes/inference.js's identical
+// comment for the full rationale.
 
-/* GET /v1/developer/health — public health check */
+/* GET /v1/developer/health — health check (outer 'secret' policy applies) */
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'careercamp-ai', uptime: Math.round(process.uptime()) });
 });
 
-/* GET /v1/developer/status — model warm status (no auth) */
+/* GET /v1/developer/status — model warm status (outer 'secret' policy applies) */
 router.get('/status', (req, res) => {
   const warmStatus = getWarmStatus();
   const allModels = Object.keys(MODELS).map(key => ({
@@ -40,14 +47,14 @@ router.get('/status', (req, res) => {
 });
 
 /* GET /v1/developer/metrics — detailed performance metrics (auth required) */
-router.get('/metrics', apiKeyGuard, (req, res) => {
+router.get('/metrics', (req, res) => {
   const summary  = metrics.getSummary();
   const detailed = metrics.getDetailed();
   res.json({ success: true, summary, detailed });
 });
 
 /* POST /v1/developer/ping/:model — ping a specific model */
-router.post('/ping/:model', apiKeyGuard, async (req, res) => {
+router.post('/ping/:model', async (req, res) => {
   const { model } = req.params;
   if (!MODELS[model]) return res.status(400).json({ error: `Unknown model: ${model}. Valid: ${Object.keys(MODELS).join(', ')}` });
   const start = Date.now();
@@ -56,7 +63,7 @@ router.post('/ping/:model', apiKeyGuard, async (req, res) => {
 });
 
 /* GET /v1/developer/task-models — show task → model routing table */
-router.get('/task-models', apiKeyGuard, (req, res) => {
+router.get('/task-models', (req, res) => {
   const table = Object.entries(TASK_MODELS).map(([task, model]) => ({
     task,
     model,
@@ -80,8 +87,8 @@ router.get('/docs', (req, res) => {
       { method: 'POST', path: '/v1/memory/:userId',           auth: true,  description: 'Update career memory fields.' },
       { method: 'DELETE',path: '/v1/memory/:userId',          auth: true,  description: 'Clear all memory for a user.' },
       { method: 'POST', path: '/v1/memory/:userId/extract',   auth: true,  description: 'Extract career facts from conversation and save to memory.' },
-      { method: 'GET',  path: '/v1/developer/health',         auth: false, description: 'Public health check.' },
-      { method: 'GET',  path: '/v1/developer/status',         auth: false, description: 'Model warm status and platform info.' },
+      { method: 'GET',  path: '/v1/developer/health',         auth: true,  description: 'Health check. Use the top-level GET /health for unauthenticated monitoring.' },
+      { method: 'GET',  path: '/v1/developer/status',         auth: true,  description: 'Model warm status and platform info.' },
       { method: 'GET',  path: '/v1/developer/metrics',        auth: true,  description: 'Detailed performance metrics per model.' },
       { method: 'POST', path: '/v1/developer/ping/:model',    auth: true,  description: 'Ping a specific local model to check warm status.' },
       { method: 'GET',  path: '/v1/developer/task-models',    auth: true,  description: 'Task to model routing table.' },

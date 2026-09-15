@@ -7,15 +7,15 @@ const express = require('express');
 const router  = express.Router();
 const { infer } = require('../engine/inferenceEngine');
 
-function apiKeyGuard(req, res, next) {
-  const key = req.headers['x-api-key'] || req.headers.authorization?.replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (!valid || key !== valid) return res.status(401).json({ error: 'unauthorized' });
-  next();
-}
+// Auth: enforced by core/gatewayAuth.js's centralized `authorize(['secret'])`
+// policy at this router's mount point in server.js. A router-local
+// apiKeyGuard checking CS_TRANSFORMER_API_KEY/CAREERCAMP_API_KEY used to
+// live here too -- removed 2026-09-15 (CS-1 gateway auth review) because it
+// conflicted with the outer 'secret'-class policy. See routes/inference.js's
+// identical comment for the full rationale.
 
 /* POST /v1/tools/:toolId — analyse a specific tool */
-router.post('/:toolId', apiKeyGuard, async (req, res) => {
+router.post('/:toolId', async (req, res) => {
   const { toolId } = req.params;
   const { userId, userRole, country, language, currentLevel } = req.body;
 
@@ -47,7 +47,7 @@ Current user level: ${currentLevel || 'L1 Aware'}`;
 });
 
 /* POST /v1/tools/:toolId/compare — compare two tools */
-router.post('/:toolId/compare', apiKeyGuard, async (req, res) => {
+router.post('/:toolId/compare', async (req, res) => {
   const { toolId }                  = req.params;
   const { compareWith, userId, country, language } = req.body;
 

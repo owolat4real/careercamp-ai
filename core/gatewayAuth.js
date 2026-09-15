@@ -36,6 +36,28 @@ function _safeEqual(a, b) {
 
 const MAX_CREDENTIAL_LENGTH = 512; // generous — real keys are ~50-60 chars; anything past this is malformed, not a real key
 
+// ── Log-safe URL redaction ──────────────────────────────────────────────
+// Shared by this module's own auth-failure warnings AND server.js's global
+// morgan access logger (via a custom :url token override) -- one regex,
+// one place, rather than two independent redaction implementations that
+// could drift. Redacts the *value* only, keeping "api_key=" so a log
+// reader can still see that transport was used, per CS-1 gateway auth
+// review Priority 1 (2026-09-15): "?api_key=..." must never reach any log
+// unredacted, on success, failure, OR when a different transport ends up
+// actually deciding the request (the query value can appear in the logged
+// URL even when it was never read for authorization).
+function redactUrl(url) {
+  if (typeof url !== 'string' || !url) return url;
+  // Normalizes any api_key transport variant -- plain (?api_key=x), repeated
+  // (&api_key=x), or a structured/bracket key name (?api_key[toString]=x,
+  // itself never a valid credential, see extractPresented's own handling of
+  // this shape) -- down to exactly "api_key=[REDACTED]". Discarding any
+  // bracket content rather than merely blanking the value keeps an
+  // attacker-chosen key name (which could itself be arbitrary text) out of
+  // the log too, not just the credential value.
+  return url.replace(/([?&])api_key(?:\[[^\]]*\])?=[^&]*/gi, '$1api_key=[REDACTED]');
+}
+
 // ── Credential classes ─────────────────────────────────────────────────
 // Read once at module load (server-side only) — matches the existing
 // gateway's own boot-time VALID_GATEWAY_KEYS pattern; a credential can't
@@ -86,6 +108,21 @@ function checkConfiguration() {
       detail: CREDENTIAL_CLASSES.map(c => c.envVar),
     };
   }
+  // A configured credential longer than classify() will ever accept is a
+  // silent availability defect, not a security one: it passes startup but
+  // can never actually authenticate (classify() rejects any *presented*
+  // value over this length as malformed before ever comparing it). Catch
+  // it at boot instead of leaving that class permanently, confusingly
+  // unusable. Checked against the SAME MAX_CREDENTIAL_LENGTH used for
+  // presented values, per CS-1 gateway auth review Priority 5 (2026-09-15).
+  const tooLong = _configured.filter(c => c.value.length > MAX_CREDENTIAL_LENGTH);
+  if (tooLong.length) {
+    return {
+      ok: false,
+      reason: 'credential_too_long',
+      detail: tooLong.map(c => c.envVar),
+    };
+  }
   for (let i = 0; i < _configured.length; i++) {
     for (let j = i + 1; j < _configured.length; j++) {
       if (_safeEqual(_configured[i].value, _configured[j].value)) {
@@ -103,6 +140,22 @@ function checkConfiguration() {
 // ── Credential classification ───────────────────────────────────────────
 // Never logs or returns the presented value. `reason` is populated only
 // when `class` is null, and is a category label, not secret material.
+//
+// Timing-accuracy note (CS-1 gateway auth review Priority 9, 2026-09-15):
+// only the individual value-vs-value comparison inside _safeEqual() is
+// constant-time (fixed-size HMAC digests through crypto.timingSafeEqual).
+// classify() AS A WHOLE is not: the length check above short-circuits
+// before any comparison for an over-long input, and the loop below exits
+// on the FIRST matching configured class, so total wall-clock time still
+// depends on input length and on which class (if any) matches. This is a
+// real, acknowledged gap, not a claimed guarantee -- it means classify()
+// cannot be assumed to hide "how close" an incorrect guess was, only that
+// a single value-to-value comparison itself doesn't leak via timing. No
+// credential-recovery timing attack has been demonstrated against it, and
+// hiding match-order/length timing too would need a fixed-work classifier
+// (e.g. always comparing against every configured class, and normalizing
+// input length before hashing) with no known real benefit at this
+// credential count (<=3) and over this gateway's real network path.
 function classify(presented) {
   if (typeof presented !== 'string' || !presented.trim()) {
     return { class: null, reason: 'missing_credential' };
@@ -136,8 +189,22 @@ function extractPresented(req) {
   const headers = (req && req.headers) || {};
   const fromAuth = String(headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (fromAuth) return fromAuth;
-  const fromQuery = req && req.query && req.query.api_key;
-  if (fromQuery) return String(fromQuery);
+  // Express's query parser (qs) turns `?api_key[toString]=x` into a plain
+  // OBJECT `{ toString: 'x' }` -- a naive `String(fromQuery)` then invokes
+  // that object's own `toString` PROPERTY (a string, not a function) as a
+  // function call, throwing a TypeError that used to reach the server's
+  // generic error handler as an HTTP 500. Strings (the normal case) and
+  // arrays (repeated `?api_key=a&api_key=b`, or the single-element
+  // `?api_key[]=x` form) are safe to stringify via a built-in that never
+  // invokes attacker-supplied properties; anything else (a structured/
+  // bracket-object query value) is treated as though no query credential
+  // were presented at all, falling through to x-api-key rather than ever
+  // being coerced. Fixed 2026-09-15, CS-1 gateway auth review Priority 4.
+  const rawQuery = req && req.query ? req.query.api_key : undefined;
+  if (typeof rawQuery === 'string' || Array.isArray(rawQuery)) {
+    const fromQuery = String(rawQuery);
+    if (fromQuery) return fromQuery;
+  }
   return String(headers['x-api-key'] || '');
 }
 
@@ -156,7 +223,12 @@ function authorize(allowedClasses) {
   return function gatewayAuthMiddleware(req, res, next) {
     const presented = extractPresented(req);
     const { class: cls, reason } = classify(presented);
-    const route = `${req.method} ${req.originalUrl || req.url}`;
+    // redactUrl strips any ?api_key=... value before this ever reaches a
+    // log line -- the credential must not appear here even when it was
+    // the query param that got REJECTED, and even when a different,
+    // higher-precedence transport is what actually decided the outcome
+    // (the raw query string is still part of req.originalUrl either way).
+    const route = `${req.method} ${redactUrl(req.originalUrl || req.url)}`;
 
     if (!cls) {
       // reason is one of: missing_credential | malformed_credential | unknown_credential
@@ -181,4 +253,5 @@ module.exports = {
   identify,
   extractPresented,
   authorize,
+  redactUrl,
 };

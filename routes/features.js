@@ -8,12 +8,12 @@ const router  = express.Router();
 const { infer, stream, TASK_MODELS } = require('../engine/inferenceEngine');
 const { buildOfflineResponse }       = require('../core/offlineResponder');
 
-function apiKeyGuard(req, res, next) {
-  const key = req.headers['x-api-key'] || req.headers.authorization?.replace('Bearer ', '');
-  const valid = process.env.CS_TRANSFORMER_API_KEY || process.env.CAREERCAMP_API_KEY;
-  if (!valid || key !== valid) return res.status(401).json({ error: 'unauthorized' });
-  next();
-}
+// Auth: enforced by core/gatewayAuth.js's centralized `authorize(['secret'])`
+// policy at this router's mount point in server.js. A router-local
+// apiKeyGuard checking CS_TRANSFORMER_API_KEY/CAREERCAMP_API_KEY used to
+// live here too -- removed 2026-09-15 (CS-1 gateway auth review) because it
+// conflicted with the outer 'secret'-class policy. See routes/inference.js's
+// identical comment for the full rationale.
 
 /* Derive the best task for a given featureId */
 function featureToTask(featureId = '') {
@@ -33,7 +33,7 @@ function featureToTask(featureId = '') {
 }
 
 /* GET /v1/features/:featureId — feature info */
-router.get('/:featureId', apiKeyGuard, (req, res) => {
+router.get('/:featureId', (req, res) => {
   const { featureId } = req.params;
   const task = featureToTask(featureId);
   res.json({
@@ -45,7 +45,7 @@ router.get('/:featureId', apiKeyGuard, (req, res) => {
 });
 
 /* POST /v1/features/:featureId — feature inference */
-router.post('/:featureId', apiKeyGuard, async (req, res) => {
+router.post('/:featureId', async (req, res) => {
   const { featureId } = req.params;
   const {
     messages, userInput, userId, language, toolName,

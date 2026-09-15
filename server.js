@@ -45,6 +45,7 @@ const rateLimit  = require('express-rate-limit');
 const compression = require('compression');
 const http       = require('http');
 const axios      = require('axios');
+const gatewayAuth = require('./core/gatewayAuth');
 
 const app  = express();
 const PORT = process.env.PORT || process.env.CAREERCAMP_PORT || 3002;
@@ -63,6 +64,15 @@ app.use(compression({
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS || '*' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Overrides morgan's built-in :url token globally so EVERY format that
+// references it (including 'combined' below) logs a redacted URL. A raw
+// ?api_key=<credential> query value used to be written to this access log
+// verbatim on every request using that transport, success or failure --
+// fixed 2026-09-15, CS-1 gateway auth review Priority 1/13. Redaction
+// happens at the logging-token level only; req.url/req.originalUrl
+// themselves are never mutated, so routing and query parsing elsewhere are
+// unaffected.
+morgan.token('url', (req) => gatewayAuth.redactUrl(req.originalUrl || req.url));
 app.use(morgan('combined', { skip: (req) => req.url === '/health' }));
 
 // Rate limiting — generous limits for internal use
@@ -135,9 +145,9 @@ app.locals.engines = {
 // surface. Each route family below now names exactly which credential
 // class(es) its real, source-confirmed CareerStudioMax consumers use --
 // see the route-to-credential matrix in that task's own report for the
-// evidence behind each choice.
-const gatewayAuth = require('./core/gatewayAuth');
-
+// evidence behind each choice. (gatewayAuth itself is required near the
+// top of this file, before the morgan :url token override, so it's reused
+// here rather than required a second time.)
 const _gwConfig = gatewayAuth.checkConfiguration();
 if (!_gwConfig.ok) {
   console.error(
@@ -257,7 +267,19 @@ app.get('/v1', (req, res) => {
   });
 });
 
-app.get('/v1/models', authCampOrCore, (req, res, next) => {
+// Mounted with app.use() (prefix mount), NOT app.get() (exact-path route) --
+// modelsRoute is a full Router with its own GET '/' (list) and GET '/:model'
+// (detail) sub-routes. An exact app.get('/v1/models', ...) used to hand the
+// router the unstripped '/v1/models' request URL, which never matched
+// either of the router's own patterns: GET /v1/models returned a 404 despite
+// passing auth, and GET /v1/models/:model was never reachable through this
+// mount at all (fixed 2026-09-15, CS-1 gateway auth review -- pre-existing
+// bug, not introduced by the purpose-specific auth hardening, but it
+// prevented verifying that hardening's ALLOW behavior for this route).
+// app.use() strips the '/v1/models' prefix before dispatching into the
+// router, so both sub-routes now resolve correctly, both still gated by the
+// same authCampOrCore policy (secret, camp) as before.
+app.use('/v1/models', authCampOrCore, (req, res, next) => {
   req.engines = app.locals.engines;
   next();
 }, modelsRoute);
