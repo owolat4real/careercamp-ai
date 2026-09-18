@@ -42,6 +42,16 @@
 set -eo pipefail
 
 WARMUP_STATE_FILE="${WARMUP_STATE_FILE:-/tmp/careercamp-model-warmup-state}"
+# Non-secret diagnostic companion to WARMUP_STATE_FILE (2026-09-18, S3
+# restore root-cause pass) -- a real production instance reached
+# "degraded" with zero useful [warmup] log lines found, leaving no way to
+# tell WHY (S3 timeout vs AccessDenied vs NoSuchKey vs a real network
+# stall) without container log/runtime access. This file records a short,
+# curated reason CODE only (never raw AWS CLI stderr, which in principle
+# could echo back request metadata) -- additive, never read by
+# readWarmupState()'s own 3-state contract, so the existing warming/ready/
+# degraded semantics on /health are unchanged either way.
+WARMUP_REASON_FILE="${WARMUP_REASON_FILE:-${WARMUP_STATE_FILE}.reason}"
 OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-/root/.ollama/models}"
 # Generous but bounded -- a 2.1GB download or a multi-GB model pull
 # hanging forever on a stalled connection would otherwise waste this
@@ -50,11 +60,64 @@ OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-/root/.ollama/models}"
 # very poor "Low priority" community-node bandwidth for either operation
 # without being so short it fails a merely-slow-but-working transfer.
 NETWORK_OP_TIMEOUT_SECONDS="${WARMUP_NETWORK_TIMEOUT_SECONDS:-900}"
+# S3 restore root-cause pass (2026-09-18): a real instance transitioned
+# warming -> degraded at almost exactly this outer timeout's own default
+# (900s), with the restored model set completely absent afterward
+# (ollamaModels=[]) -- consistent with the S3 download itself stalling at
+# the network level (TCP/TLS never completing, not a fast AWS-side
+# AccessDenied/NoSuchKey/region error, which S3 always returns in well
+# under a second) rather than genuinely needing the full 15-minute budget.
+# These give the `aws` CLI's OWN connect/read timeouts a real, much
+# shorter bound, so a true network stall is caught and classified in
+# seconds, not silently eating the entire outer timeout window -- the
+# outer `timeout "$NETWORK_OP_TIMEOUT_SECONDS"` stays as the final,
+# unconditional safety net regardless (e.g. if retries still stack up).
+AWS_CLI_CONNECT_TIMEOUT_SECONDS="${WARMUP_AWS_CONNECT_TIMEOUT_SECONDS:-30}"
+AWS_CLI_READ_TIMEOUT_SECONDS="${WARMUP_AWS_READ_TIMEOUT_SECONDS:-60}"
+# The confirmed real region of the DR backup bucket (careerstudiomax-dr-usw2
+# is us-west-2) -- explicit so S3 region resolution never depends on
+# whatever this container's ambient AWS config (if any) happens to
+# default to. AWS_S3_REGION (this restore script's own name) takes
+# precedence so it can be set independently of AWS_REGION/AWS_DEFAULT_REGION
+# without assuming Salad's platform-level env even defines those.
+AWS_S3_REGION="${AWS_S3_REGION:-${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}}"
 
 write_state() {
   # $1 is always one of this script's own literal constants below, never
   # a variable derived from S3/network/attacker-controlled content.
   echo "$1" > "$WARMUP_STATE_FILE.tmp" && mv "$WARMUP_STATE_FILE.tmp" "$WARMUP_STATE_FILE"
+}
+
+write_reason() {
+  # $1 is always one of this script's own literal reason-code constants
+  # (see classify_aws_failure below) -- never raw command output.
+  echo "$1" > "$WARMUP_REASON_FILE.tmp" && mv "$WARMUP_REASON_FILE.tmp" "$WARMUP_REASON_FILE"
+}
+
+# Maps an aws-cli exit code + its captured stderr to a short, non-secret
+# reason code -- classifies the failure family without ever echoing the
+# CLI's raw stderr (which, while it doesn't contain the secret key value,
+# has no reason to be logged verbatim either). 124 is coreutils `timeout`'s
+# own documented exit code for "the wrapped command was killed because it
+# exceeded the timeout" -- checked first because it's authoritative
+# regardless of whatever partial stderr the killed process left behind.
+classify_aws_failure() {
+  local exit_code="$1" stderr_text="$2"
+  if [ "$exit_code" -eq 124 ]; then
+    echo "s3_download_timeout_outer"; return
+  fi
+  case "$stderr_text" in
+    *"Connect timeout"*|*"Read timeout"*|*"Connection timed out"*) echo "s3_download_timeout_cli" ;;
+    *AccessDenied*|*Forbidden*)                                     echo "s3_access_denied" ;;
+    *NoSuchKey*|*NoSuchBucket*)                                     echo "s3_no_such_key_or_bucket" ;;
+    *InvalidAccessKeyId*|*SignatureDoesNotMatch*|*UnrecognizedClientException*|*ExpiredToken*)
+      echo "s3_invalid_credentials" ;;
+    *"could not connect"*|*"Could not connect"*|*"Network is unreachable"*|*"Temporary failure in name resolution"*|*"Name or service not known"*)
+      echo "s3_network_unreachable" ;;
+    *"specify a region"*|*PermanentRedirect*|*AuthorizationHeaderMalformed*)
+      echo "s3_region_misconfigured" ;;
+    *) echo "s3_download_failed_other" ;;
+  esac
 }
 
 wait_for_ollama() {
@@ -71,42 +134,65 @@ wait_for_ollama() {
 write_state warming
 
 if ! ollama list | grep -qE "cs-careerreasoning|cs-sonnet"; then
-  if [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_S3_BUCKET:-}" ]; then
+  # AWS_SECRET_ACCESS_KEY added to this check (2026-09-18) -- previously
+  # only AWS_ACCESS_KEY_ID/AWS_S3_BUCKET were validated, so a container
+  # with an access key ID but no secret configured would fall through to
+  # the real `aws s3 cp` attempt and fail there indistinguishably from a
+  # genuine network/S3 problem, instead of being caught by this same
+  # fast, clearly-logged "not configured" branch below.
+  if [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ] && [ -n "${AWS_S3_BUCKET:-}" ]; then
     BACKUP_KEY="${MODEL_BACKUP_KEY:-model-backups/cs-custom-models-2026-09-03.tar.gz}"
     ARCHIVE="${WARMUP_ARCHIVE_PATH:-/tmp/models-backup.tar.gz}"
-    echo "==> [warmup] Restoring custom fine-tuned models from S3 (bucket/key come from env vars, never logged)..."
+    echo "==> [warmup] Restoring custom fine-tuned models from S3 (bucket/key/region come from env vars, never logged)..."
 
     mkdir -p "$OLLAMA_MODELS_DIR"
 
-    if timeout "$NETWORK_OP_TIMEOUT_SECONDS" aws s3 cp "s3://${AWS_S3_BUCKET}/${BACKUP_KEY}" "$ARCHIVE"; then
+    AWS_STDERR_FILE="$(mktemp)"
+    if AWS_DEFAULT_REGION="$AWS_S3_REGION" timeout "$NETWORK_OP_TIMEOUT_SECONDS" \
+         aws s3 cp "s3://${AWS_S3_BUCKET}/${BACKUP_KEY}" "$ARCHIVE" \
+         --cli-connect-timeout "$AWS_CLI_CONNECT_TIMEOUT_SECONDS" \
+         --cli-read-timeout "$AWS_CLI_READ_TIMEOUT_SECONDS" \
+         2>"$AWS_STDERR_FILE"; then
+      rm -f "$AWS_STDERR_FILE"
       if tar -xzf "$ARCHIVE" -C "$OLLAMA_MODELS_DIR"; then
         rm -f "$ARCHIVE"
         echo "==> [warmup] Restore extracted -- restarting ollama so it picks up the new manifests/blobs..."
         pkill -f "ollama serve" || true
         sleep 2
         ollama serve &
-        if wait_for_ollama 60; then
+        # Overridable (2026-09-18) purely so a test can exercise a genuine
+        # restart-failure without a real 2-minute wait -- default (60
+        # attempts x 2s = 2 minutes) is unchanged for every real deployment.
+        if wait_for_ollama "${WARMUP_OLLAMA_RESTART_WAIT_ATTEMPTS:-60}"; then
           echo "    [warmup] ollama back up. Resident: $(ollama list | tr '\n' ' ')"
         else
           echo "!! [warmup] ollama did not come back up after the restore restart -- continuing degraded."
           write_state degraded
+          write_reason ollama_restart_failed
         fi
       else
         echo "!! [warmup] Archive extraction failed -- removing partial/corrupt archive, continuing degraded."
         rm -f "$ARCHIVE"
         write_state degraded
+        write_reason archive_extraction_failed
       fi
     else
-      echo "!! [warmup] S3 download failed or timed out after ${NETWORK_OP_TIMEOUT_SECONDS}s -- continuing degraded."
+      AWS_EXIT_CODE=$?
+      AWS_FAILURE_REASON="$(classify_aws_failure "$AWS_EXIT_CODE" "$(cat "$AWS_STDERR_FILE" 2>/dev/null)")"
+      rm -f "$AWS_STDERR_FILE"
+      echo "!! [warmup] S3 download failed (reason: ${AWS_FAILURE_REASON}, exit ${AWS_EXIT_CODE}, budget ${NETWORK_OP_TIMEOUT_SECONDS}s) -- continuing degraded."
       echo "!! [warmup] The app's own fallback cascade (Groq/OpenRouter) carries those requests instead."
       rm -f "$ARCHIVE"
       write_state degraded
+      write_reason "$AWS_FAILURE_REASON"
     fi
   else
-    echo "!! [warmup] AWS_ACCESS_KEY_ID / AWS_S3_BUCKET not set in this container group's Environment Variables --"
-    echo "!! [warmup] the custom fine-tuned models CANNOT be restored (no public base -- see backupCustomModels.sh)."
+    echo "!! [warmup] AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_S3_BUCKET not all set in this container"
+    echo "!! [warmup] group's Environment Variables -- the custom fine-tuned models CANNOT be restored (no"
+    echo "!! [warmup] public base -- see backupCustomModels.sh)."
     echo "!! [warmup] Continuing; the app's own fallback cascade (Groq/OpenRouter) carries those requests instead."
     write_state degraded
+    write_reason credentials_not_configured
   fi
 else
   echo "==> [warmup] reasoning-tier model already present -- skipping restore."
@@ -132,6 +218,7 @@ if ! ollama list | grep -q "cs-careerqueen"; then
   else
     echo "!! [warmup] llava-phi3 pull/cp failed or timed out -- vision falls through to its own existing fallback."
     write_state degraded
+    write_reason vision_pull_failed
   fi
 fi
 

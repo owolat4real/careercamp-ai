@@ -86,9 +86,16 @@ esac
   };
   if (awsCredsPresent) {
     env.AWS_ACCESS_KEY_ID = 'synthetic_test_key_id';
+    // 2026-09-18 S3 restore root-cause pass: the script now also validates
+    // AWS_SECRET_ACCESS_KEY (previously unchecked -- a real gap, since a
+    // container with an access key ID but no secret configured used to
+    // fall through to a real, indistinguishable `aws s3 cp` failure
+    // instead of this same fast "not configured" branch).
+    env.AWS_SECRET_ACCESS_KEY = 'synthetic_test_secret_key';
     env.AWS_S3_BUCKET = 'synthetic-test-bucket';
   } else {
     delete env.AWS_ACCESS_KEY_ID;
+    delete env.AWS_SECRET_ACCESS_KEY;
     delete env.AWS_S3_BUCKET;
   }
 

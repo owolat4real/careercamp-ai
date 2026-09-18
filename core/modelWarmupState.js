@@ -25,12 +25,46 @@
  * and it's inherently per-instance already (Salad's own ephemeral
  * filesystem resets it on every fresh instance, which is the correct
  * behavior here — there is no cross-instance persistence to claim).
+ *
+ * S3 restore root-cause pass (2026-09-18): a real instance reached
+ * 'degraded' with no way to tell WHY -- S3 timeout, AccessDenied,
+ * NoSuchKey, a region problem, or a genuine network stall all looked
+ * identical from this state alone. readWarmupReason() below reads a
+ * SEPARATE, purely additive, non-secret reason-code file
+ * salad-model-warmup.sh now also writes (see its own classify_aws_failure)
+ * -- it does not change readWarmupState()'s own three-value return
+ * contract at all, so any existing caller of readWarmupState() is
+ * completely unaffected.
  */
 
 const fs = require('fs');
 
 const VALID_STATES = new Set(['warming', 'ready', 'degraded']);
 const STATE_FILE = process.env.WARMUP_STATE_FILE || '/tmp/careercamp-model-warmup-state';
+// Mirrors salad-model-warmup.sh's own WARMUP_REASON_FILE default exactly
+// (${WARMUP_STATE_FILE}.reason) so the two stay in sync without either
+// side needing its own separate env var by default.
+const REASON_FILE = process.env.WARMUP_REASON_FILE || `${STATE_FILE}.reason`;
+// The exact, closed set of reason codes classify_aws_failure() (and the
+// script's other write_reason() call sites) can produce -- kept in sync
+// with scripts/salad-model-warmup.sh by hand, deliberately, the same way
+// VALID_STATES already is. Anything else (including a corrupt or
+// attacker-controlled file, e.g. via a compromised background process)
+// is treated as "no known reason" rather than passed through.
+const VALID_REASONS = new Set([
+  's3_download_timeout_outer',
+  's3_download_timeout_cli',
+  's3_access_denied',
+  's3_no_such_key_or_bucket',
+  's3_invalid_credentials',
+  's3_network_unreachable',
+  's3_region_misconfigured',
+  's3_download_failed_other',
+  'archive_extraction_failed',
+  'ollama_restart_failed',
+  'vision_pull_failed',
+  'credentials_not_configured',
+]);
 
 /**
  * readWarmupState — synchronous, side-effect-free, never throws.
@@ -47,4 +81,21 @@ function readWarmupState() {
   }
 }
 
-module.exports = { readWarmupState, STATE_FILE, VALID_STATES };
+/**
+ * readWarmupReason — synchronous, side-effect-free, never throws.
+ * Returns one of VALID_REASONS' short diagnostic codes, or `null` when no
+ * reason has been recorded (the happy path, a still-warming instance, or
+ * outside Salad entirely -- e.g. local dev, where this file never
+ * exists). Never a raw/arbitrary string -- an unrecognized value in the
+ * file is treated exactly like a missing one.
+ */
+function readWarmupReason() {
+  try {
+    const raw = fs.readFileSync(REASON_FILE, 'utf8').trim();
+    return VALID_REASONS.has(raw) ? raw : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+module.exports = { readWarmupState, readWarmupReason, STATE_FILE, REASON_FILE, VALID_STATES, VALID_REASONS };
