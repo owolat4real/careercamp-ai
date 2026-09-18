@@ -224,7 +224,8 @@ test('S3 timeout: a genuinely hanging download is caught by the (short, test-onl
 // killed by the old shared 900s cap while a 2.1 GiB download was healthily
 // progressing. The S3 download now has its own budget
 // (WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS, default 3600s), separate from the
-// model-pull budget (WARMUP_NETWORK_TIMEOUT_SECONDS, default 900s).
+// model-pull budget (WARMUP_MODEL_PULL_TIMEOUT_SECONDS, default 3600s --
+// see test/saladModelWarmupPullTimeout.test.js).
 const BUDGET_LINE = /S3 download budget: (\d+)s/;
 function budgetOf(stdout) {
   const m = BUDGET_LINE.exec(stdout);
@@ -270,13 +271,13 @@ test('S3 timeout budget: leading zeros are read as decimal, not octal', () => {
 });
 
 test('a slow-but-progressing download that outlasts the shared model-pull budget still completes and reaches "ready"', () => {
-  // The shared WARMUP_NETWORK_TIMEOUT_SECONDS (model pulls) is set to 1s and
-  // the fake aws takes 3s -- under the OLD behaviour the S3 download was
-  // governed by that same variable and would have been killed (exit 124).
-  // With its own budget it must finish, extract, and reach ready.
+  // The model-pull budget (WARMUP_MODEL_PULL_TIMEOUT_SECONDS) is set to 1s
+  // and the fake aws takes 3s -- if the S3 download were governed by the
+  // pull budget it would be killed (exit 124). With its own budget it must
+  // finish, extract, and reach ready.
   const { result, stateFile, reasonFile, scratch } = runWarmup({
     awsSleepSeconds: 3,
-    extraEnv: { WARMUP_NETWORK_TIMEOUT_SECONDS: '1', WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: '30' },
+    extraEnv: { WARMUP_MODEL_PULL_TIMEOUT_SECONDS: '1', WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: '30' },
   });
   try {
     assert.equal(result.status, 0, result.stderr);
@@ -315,11 +316,13 @@ test('the S3 budget line and failure line never leak bucket, key, or credential 
   } finally { cleanup(scratch); }
 }, 20_000);
 
-test('the model-pull budget is unchanged: WARMUP_NETWORK_TIMEOUT_SECONDS still governs the llava-phi3 pull, not the S3 download', () => {
+test('the S3 download and the model pulls use separate budgets in the script source', () => {
   const src = fs.readFileSync(SCRIPT, 'utf8');
-  assert.match(src, /NETWORK_OP_TIMEOUT_SECONDS="\$\{WARMUP_NETWORK_TIMEOUT_SECONDS:-900\}"/);
-  assert.match(src, /timeout "\$NETWORK_OP_TIMEOUT_SECONDS" ollama pull llava-phi3/);
-  assert.match(src, /timeout "\$S3_DOWNLOAD_TIMEOUT_SECONDS" \\/);
+  assert.ok(src.includes('timeout "$S3_DOWNLOAD_TIMEOUT_SECONDS" \\\n'), 'S3 download must use the S3 budget');
+  assert.ok(src.includes('timeout "$MODEL_PULL_TIMEOUT_SECONDS" ollama pull llava-phi3'), 'llava pull must use the pull budget');
+  assert.ok(!src.includes('timeout "$S3_DOWNLOAD_TIMEOUT_SECONDS" ollama pull'), 'pulls must never use the S3 budget');
+  assert.ok(!/timeout "\$MODEL_PULL_TIMEOUT_SECONDS" \\\n\s+aws s3 cp/.test(src), 'S3 download must never use the pull budget');
+  assert.ok(!src.includes('NETWORK_OP_TIMEOUT_SECONDS'), 'the retired shared budget must not linger');
 });
 
 test('S3 command failure: AccessDenied is classified distinctly from a generic failure', () => {
