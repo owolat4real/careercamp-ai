@@ -1,0 +1,189 @@
+name: Build & Push Salad Release Image (immutable)
+
+# Builds the SaladCloud production patch image (Dockerfile.salad-patch)
+# on GitHub's own runner instead of a local machine -- the local dev
+# machine's C: drive has only ~5GB free (Docker's own existing WSL2 data
+# disk already occupies ~60GB of it) and the only drive with real free
+# space is a removable USB/exFAT external disk, which is not a safe host
+# for a live Docker/WSL2 virtual disk. Same reasoning as build-svd.yml's
+# own header, just for this image.
+#
+# Manual-only on purpose (workflow_dispatch, no push/pull_request
+# trigger): this produces a fixed, commit-pinned release tag, not a
+# rolling build-on-every-push image like build-svd.yml's :latest --
+# publishing it should always be an explicit, human-initiated action, and
+# a manual-only trigger also means no pull_request (trusted or
+# untrusted) can ever cause this job to run or publish anything.
+#
+# Reproducibility note (deliberately NOT "fixed" here, reported instead):
+# Dockerfile.salad-patch's own FROM is the mutable
+# owo1232011/careerstudiomax:latest -- no digest for that image (or for
+# its own upstream ollama/ollama:latest) has ever been committed anywhere
+# in this repo's history, so one cannot be safely pinned from existing
+# evidence without guessing. The "Resolve base image digest" step below
+# does not change that FROM line -- it queries and prints the digest
+# :latest actually resolves to at the moment of this specific build, so
+# every run leaves a real, auditable record of exactly what was built
+# against, in the run's own logs and job summary.
+#
+# This workflow file lives on the default branch (master) so it's
+# actually dispatchable at all -- GitHub only lists/accepts
+# workflow_dispatch for a workflow file that exists on the default
+# branch. What it BUILDS is independent of that: source_ref below picks
+# the actual application source, and defaults to the reconciled Salad fix
+# branch, not master. Do not assume dispatching this from master's own
+# branch selector builds master's own content -- it deliberately doesn't.
+#
+# source_ref is allowlisted (see "Validate source_ref" below), not a free
+# text field an arbitrary ref can flow into: workflow_dispatch already
+# requires repo write access to trigger at all (no push/pull_request
+# trigger exists), but allowlisting means even a trusted collaborator
+# can't cause the OFFICIAL owo1232011/careerstudiomax image to be built
+# from some unreviewed branch merely by typing a different string into
+# this input -- only from a small set of known-good release refs.
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Allowlisted branch to build from (application source, independent of this workflow file''s own location on master)'
+        required: true
+        default: 'fix/salad-s3-restore-current'
+      image_tag:
+        description: 'Docker Hub tag to publish under owo1232011/careerstudiomax (never "latest")'
+        required: true
+        default: 'salad-s3-restore-c487789'
+
+permissions:
+  contents: read
+
+jobs:
+  release-test-gate:
+    # Deliberately NOT the full `npm test` chain: that chain also runs
+    # test/gatewayAuth.second-review.test.js, which depends on reading
+    # real source out of a sibling cs_fixed checkout and has a real,
+    # pre-existing, UNRELATED failure on at least one real clone of this
+    # repo (a stale sibling snapshot whose services/camp-client.js content
+    # has drifted from current cs_fixed -- a content-mismatch, not
+    # something this workflow's runner even has, since cs_fixed is never
+    # checked out here at all). Gating a Salad image release on an
+    # assertion about unrelated cs_fixed source drift would either block
+    # every future release on a defect this image has nothing to do with,
+    # or invite quietly skipping/weakening a real security test just to
+    # turn CI green -- neither is acceptable. `npm run test:salad-release`
+    # is the deterministic, purpose-built alternative: exactly the
+    # Salad-specific suites plus the gatewayAuth image/startup assertions
+    # that are actually relevant to what this image ships, none of them
+    # dependent on cs_fixed being checked out at all. That script comes
+    # from source_ref's OWN checked-out package.json below -- master's
+    # package.json is never touched by this workflow and does not need
+    # this script added to it.
+    runs-on: ubuntu-latest
+    outputs:
+      resolved_sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Validate source_ref against the release allowlist
+        run: |
+          case "${{ github.event.inputs.source_ref }}" in
+            master|fix/salad-s3-restore-current) ;;
+            *)
+              echo "::error::source_ref '${{ github.event.inputs.source_ref }}' is not an allowlisted release ref (allowed: master, fix/salad-s3-restore-current)."
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout requested source_ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.source_ref }}
+
+      - name: Resolve and record the exact source commit SHA
+        id: resolve
+        run: |
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "source_ref '${{ github.event.inputs.source_ref }}' resolved to commit $sha"
+          {
+            echo '### Source commit for this release'
+            echo "- source_ref: \`${{ github.event.inputs.source_ref }}\`"
+            echo "- resolved commit: \`$sha\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deterministic Salad release test gate
+        run: npm run test:salad-release
+
+  build-and-push:
+    needs: release-test-gate
+    runs-on: ubuntu-latest
+    # No AWS/Salad credentials anywhere in this job -- the S3 model
+    # restore (scripts/salad-model-warmup.sh) is a runtime background job
+    # against real Salad Environment Variables, never a build-time step.
+    # Only Docker Hub credentials are used, and only to push the one
+    # named, non-"latest" tag below.
+    steps:
+      - name: Checkout the EXACT commit resolved and tested above (not a mutable branch name)
+        # Deliberately the resolved SHA from release-test-gate, not
+        # source_ref itself -- source_ref names a branch, which could
+        # move (a new push) in the time between that job's checkout and
+        # this one. Using the pinned SHA means this job always builds
+        # precisely what release-test-gate just tested, never a
+        # newer/different commit that happened to land on the branch in
+        # between.
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-test-gate.outputs.resolved_sha }}
+
+      - name: Reject "latest" as the requested tag
+        if: ${{ github.event.inputs.image_tag == 'latest' }}
+        run: |
+          echo "::error::image_tag must never be 'latest' for this workflow."
+          exit 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve base image digest (reporting only -- does not change the build)
+        run: |
+          docker buildx imagetools inspect owo1232011/careerstudiomax:latest > base-image-digest.txt || \
+            echo "warning: could not resolve owo1232011/careerstudiomax:latest digest (image may be private or unreachable from this runner)" > base-image-digest.txt
+          cat base-image-digest.txt
+          {
+            echo '### Base image resolved for this build'
+            echo '```'
+            cat base-image-digest.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push (single immutable tag, never "latest")
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.salad-patch
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/careerstudiomax:${{ github.event.inputs.image_tag }}
+          provenance: false
+          sbom: false
+
+      - name: Report pushed image digest
+        run: |
+          echo "Pushed ${{ secrets.DOCKERHUB_USERNAME }}/careerstudiomax:${{ github.event.inputs.image_tag }}"
+          echo "Digest: ${{ steps.build.outputs.digest }}"
+          {
+            echo '### Published image'
+            echo "- tag: \`${{ secrets.DOCKERHUB_USERNAME }}/careerstudiomax:${{ github.event.inputs.image_tag }}\`"
+            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
