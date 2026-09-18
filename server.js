@@ -46,7 +46,7 @@ const compression = require('compression');
 const http       = require('http');
 const axios      = require('axios');
 const gatewayAuth = require('./core/gatewayAuth');
-const { readWarmupState } = require('./core/modelWarmupState');
+const { readWarmupState, readWarmupReason } = require('./core/modelWarmupState');
 
 const app  = express();
 const PORT = process.env.PORT || process.env.CAREERCAMP_PORT || 3002;
@@ -226,6 +226,11 @@ app.get('/health', async (req, res) => {
     // from "is the gateway itself up" (always answered by this endpoint
     // responding at all).
     modelWarmup: readWarmupState(),
+    // Purely additive (2026-09-18, S3 restore root-cause pass) -- `null`
+    // on the happy path, while still warming, or outside Salad entirely.
+    // Never changes modelWarmup's own three-value contract above; existing
+    // consumers of this endpoint that only read modelWarmup are unaffected.
+    modelWarmupReason: readWarmupReason(),
     engines: {
       bert:    careerBERT.status(),
       llm:     careerLM.status(),
