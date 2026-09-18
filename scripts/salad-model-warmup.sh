@@ -74,6 +74,31 @@ NETWORK_OP_TIMEOUT_SECONDS="${WARMUP_NETWORK_TIMEOUT_SECONDS:-900}"
 # unconditional safety net regardless (e.g. if retries still stack up).
 AWS_CLI_CONNECT_TIMEOUT_SECONDS="${WARMUP_AWS_CONNECT_TIMEOUT_SECONDS:-30}"
 AWS_CLI_READ_TIMEOUT_SECONDS="${WARMUP_AWS_READ_TIMEOUT_SECONDS:-60}"
+# S3 restore timeout remediation (2026-09-19): the first real Salad restore
+# (Version 11) proved connectivity, region and object access all work --
+# the ~2.1 GiB archive was healthily progressing (about 1.1 GiB done) when
+# the shared 900s outer timeout above killed it (exit 124,
+# s3_download_timeout_outer), leaving Ollama with no models. The inner
+# --cli-read-timeout above is a per-socket idle timeout, not a total
+# budget, so it never interferes with a transfer that keeps moving; the
+# only thing that ended this one was the outer wall-clock cap. 900s cannot
+# fit a multi-GB archive at community-node bandwidth (~1.25-1.5 MiB/s
+# observed: 2.1 GiB needs roughly 24-29 minutes), so the S3 download gets
+# its own budget instead of sharing the model-pull one (which is
+# deliberately left at 900s -- see NETWORK_OP_TIMEOUT_SECONDS).
+# 3600s = about 2x the worst observed time, i.e. still completes down to
+# roughly 0.6 MiB/s, while a genuinely stalled transfer is still killed
+# and classified within an hour rather than running forever. Must be a
+# positive integer: `timeout 0` DISABLES the limit entirely, so 0, empty
+# and non-numeric values fall back to the default rather than ever
+# producing an unbounded download.
+S3_DOWNLOAD_TIMEOUT_DEFAULT_SECONDS=3600
+S3_DOWNLOAD_TIMEOUT_SECONDS="${WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS:-$S3_DOWNLOAD_TIMEOUT_DEFAULT_SECONDS}"
+if ! [[ "$S3_DOWNLOAD_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$((10#$S3_DOWNLOAD_TIMEOUT_SECONDS))" -le 0 ]; then
+  S3_DOWNLOAD_TIMEOUT_SECONDS="$S3_DOWNLOAD_TIMEOUT_DEFAULT_SECONDS"
+else
+  S3_DOWNLOAD_TIMEOUT_SECONDS="$((10#$S3_DOWNLOAD_TIMEOUT_SECONDS))"
+fi
 # The confirmed real region of the DR backup bucket (careerstudiomax-dr-usw2
 # is us-west-2) -- explicit so S3 region resolution never depends on
 # whatever this container's ambient AWS config (if any) happens to
@@ -148,7 +173,8 @@ if ! ollama list | grep -qE "cs-careerreasoning|cs-sonnet"; then
     mkdir -p "$OLLAMA_MODELS_DIR"
 
     AWS_STDERR_FILE="$(mktemp)"
-    if AWS_DEFAULT_REGION="$AWS_S3_REGION" timeout "$NETWORK_OP_TIMEOUT_SECONDS" \
+    echo "    [warmup] S3 download budget: ${S3_DOWNLOAD_TIMEOUT_SECONDS}s (inner CLI connect/read timeouts still apply)"
+    if AWS_DEFAULT_REGION="$AWS_S3_REGION" timeout "$S3_DOWNLOAD_TIMEOUT_SECONDS" \
          aws s3 cp "s3://${AWS_S3_BUCKET}/${BACKUP_KEY}" "$ARCHIVE" \
          --cli-connect-timeout "$AWS_CLI_CONNECT_TIMEOUT_SECONDS" \
          --cli-read-timeout "$AWS_CLI_READ_TIMEOUT_SECONDS" \
@@ -180,7 +206,7 @@ if ! ollama list | grep -qE "cs-careerreasoning|cs-sonnet"; then
       AWS_EXIT_CODE=$?
       AWS_FAILURE_REASON="$(classify_aws_failure "$AWS_EXIT_CODE" "$(cat "$AWS_STDERR_FILE" 2>/dev/null)")"
       rm -f "$AWS_STDERR_FILE"
-      echo "!! [warmup] S3 download failed (reason: ${AWS_FAILURE_REASON}, exit ${AWS_EXIT_CODE}, budget ${NETWORK_OP_TIMEOUT_SECONDS}s) -- continuing degraded."
+      echo "!! [warmup] S3 download failed (reason: ${AWS_FAILURE_REASON}, exit ${AWS_EXIT_CODE}, budget ${S3_DOWNLOAD_TIMEOUT_SECONDS}s) -- continuing degraded."
       echo "!! [warmup] The app's own fallback cascade (Groq/OpenRouter) carries those requests instead."
       rm -f "$ARCHIVE"
       write_state degraded
