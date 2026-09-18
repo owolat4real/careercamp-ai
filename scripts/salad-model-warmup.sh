@@ -53,27 +53,57 @@ WARMUP_STATE_FILE="${WARMUP_STATE_FILE:-/tmp/careercamp-model-warmup-state}"
 # degraded semantics on /health are unchanged either way.
 WARMUP_REASON_FILE="${WARMUP_REASON_FILE:-${WARMUP_STATE_FILE}.reason}"
 OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-/root/.ollama/models}"
-# Generous but bounded -- a 2.1GB download or a multi-GB model pull
-# hanging forever on a stalled connection would otherwise waste this
-# background job's resources for the container's entire lifetime with no
-# way to notice from the logs alone. 15 minutes comfortably covers even
-# very poor "Low priority" community-node bandwidth for either operation
-# without being so short it fails a merely-slow-but-working transfer.
-NETWORK_OP_TIMEOUT_SECONDS="${WARMUP_NETWORK_TIMEOUT_SECONDS:-900}"
+# Prints $1 as a plain decimal positive integer, or $2 (the default) when
+# $1 is empty, non-numeric, negative, or zero. Every wall-clock budget
+# below goes through this: `timeout 0` DISABLES the limit entirely, so a
+# bad value must never be passed through -- it falls back to the bounded
+# default instead. Leading zeros are read as decimal, not octal.
+positive_int_or_default() {
+  if [[ "$1" =~ ^[0-9]+$ ]] && [ "$((10#$1))" -gt 0 ]; then
+    echo "$((10#$1))"
+  else
+    echo "$2"
+  fi
+}
 # S3 restore root-cause pass (2026-09-18): a real instance transitioned
-# warming -> degraded at almost exactly this outer timeout's own default
-# (900s), with the restored model set completely absent afterward
-# (ollamaModels=[]) -- consistent with the S3 download itself stalling at
-# the network level (TCP/TLS never completing, not a fast AWS-side
-# AccessDenied/NoSuchKey/region error, which S3 always returns in well
-# under a second) rather than genuinely needing the full 15-minute budget.
+# warming -> degraded at almost exactly the old shared 900s outer timeout,
+# with the restored model set completely absent afterward (ollamaModels=[]).
 # These give the `aws` CLI's OWN connect/read timeouts a real, much
 # shorter bound, so a true network stall is caught and classified in
 # seconds, not silently eating the entire outer timeout window -- the
-# outer `timeout "$NETWORK_OP_TIMEOUT_SECONDS"` stays as the final,
+# outer `timeout "$S3_DOWNLOAD_TIMEOUT_SECONDS"` below stays as the final,
 # unconditional safety net regardless (e.g. if retries still stack up).
 AWS_CLI_CONNECT_TIMEOUT_SECONDS="${WARMUP_AWS_CONNECT_TIMEOUT_SECONDS:-30}"
 AWS_CLI_READ_TIMEOUT_SECONDS="${WARMUP_AWS_READ_TIMEOUT_SECONDS:-60}"
+# S3 restore timeout remediation (2026-09-19): the first real Salad restore
+# (Version 11) proved connectivity, region and object access all work --
+# the ~2.1 GiB archive was healthily progressing (about 1.1 GiB done) when
+# the shared 900s outer timeout killed it (exit 124,
+# s3_download_timeout_outer), leaving Ollama with no models. The inner
+# --cli-read-timeout above is a per-socket idle timeout, not a total
+# budget, so it never interferes with a transfer that keeps moving; the
+# only thing that ended this one was the outer wall-clock cap. 900s cannot
+# fit a multi-GB archive at community-node bandwidth (~1.25-1.5 MiB/s
+# observed: 2.1 GiB needs roughly 24-29 minutes), so the S3 download gets
+# its own budget. 3600s = about 2x the worst observed time, i.e. still
+# completes down to roughly 0.6 MiB/s, while a genuinely stalled transfer
+# is still killed and classified within an hour.
+S3_DOWNLOAD_TIMEOUT_DEFAULT_SECONDS=3600
+S3_DOWNLOAD_TIMEOUT_SECONDS="$(positive_int_or_default "${WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS:-}" "$S3_DOWNLOAD_TIMEOUT_DEFAULT_SECONDS")"
+# Model-pull budget (2026-09-19 follow-up), INDEPENDENT of the S3 budget
+# above: covers the `ollama pull` of llava-phi3 (the only source of the
+# cs-careerqueen vision model -- the S3 backup holds only the custom text
+# and embedding models, so this pull is required for vision, not
+# redundant) and the opt-in aya-expanse:32b pull. The old shared 900s
+# (WARMUP_NETWORK_TIMEOUT_SECONDS, now retired -- it is no longer read)
+# was a wall-clock cap that kills a pull even while it is progressing,
+# exactly like the S3 case: a ~2.9 GB llava-phi3 at ~1.5 MiB/s needs
+# roughly 31 minutes. 3600s leaves ~1.9x headroom; a stalled pull is still
+# killed within an hour. aya-expanse:32b is far larger (tens of GB): it is
+# opt-in for faster, bigger-GPU nodes and should set this variable
+# explicitly for its own transfer time.
+MODEL_PULL_TIMEOUT_DEFAULT_SECONDS=3600
+MODEL_PULL_TIMEOUT_SECONDS="$(positive_int_or_default "${WARMUP_MODEL_PULL_TIMEOUT_SECONDS:-}" "$MODEL_PULL_TIMEOUT_DEFAULT_SECONDS")"
 # The confirmed real region of the DR backup bucket (careerstudiomax-dr-usw2
 # is us-west-2) -- explicit so S3 region resolution never depends on
 # whatever this container's ambient AWS config (if any) happens to
@@ -148,7 +178,8 @@ if ! ollama list | grep -qE "cs-careerreasoning|cs-sonnet"; then
     mkdir -p "$OLLAMA_MODELS_DIR"
 
     AWS_STDERR_FILE="$(mktemp)"
-    if AWS_DEFAULT_REGION="$AWS_S3_REGION" timeout "$NETWORK_OP_TIMEOUT_SECONDS" \
+    echo "    [warmup] S3 download budget: ${S3_DOWNLOAD_TIMEOUT_SECONDS}s (inner CLI connect/read timeouts still apply)"
+    if AWS_DEFAULT_REGION="$AWS_S3_REGION" timeout "$S3_DOWNLOAD_TIMEOUT_SECONDS" \
          aws s3 cp "s3://${AWS_S3_BUCKET}/${BACKUP_KEY}" "$ARCHIVE" \
          --cli-connect-timeout "$AWS_CLI_CONNECT_TIMEOUT_SECONDS" \
          --cli-read-timeout "$AWS_CLI_READ_TIMEOUT_SECONDS" \
@@ -180,7 +211,7 @@ if ! ollama list | grep -qE "cs-careerreasoning|cs-sonnet"; then
       AWS_EXIT_CODE=$?
       AWS_FAILURE_REASON="$(classify_aws_failure "$AWS_EXIT_CODE" "$(cat "$AWS_STDERR_FILE" 2>/dev/null)")"
       rm -f "$AWS_STDERR_FILE"
-      echo "!! [warmup] S3 download failed (reason: ${AWS_FAILURE_REASON}, exit ${AWS_EXIT_CODE}, budget ${NETWORK_OP_TIMEOUT_SECONDS}s) -- continuing degraded."
+      echo "!! [warmup] S3 download failed (reason: ${AWS_FAILURE_REASON}, exit ${AWS_EXIT_CODE}, budget ${S3_DOWNLOAD_TIMEOUT_SECONDS}s) -- continuing degraded."
       echo "!! [warmup] The app's own fallback cascade (Groq/OpenRouter) carries those requests instead."
       rm -f "$ARCHIVE"
       write_state degraded
@@ -213,10 +244,11 @@ echo "==> [warmup] Models now available: $(ollama list | awk 'NR>1{print $1}' | 
 
 if ! ollama list | grep -q "cs-careerqueen"; then
   echo "==> [warmup] Pulling llava-phi3 (public model) for cs-careerqueen..."
-  if timeout "$NETWORK_OP_TIMEOUT_SECONDS" ollama pull llava-phi3 && ollama cp llava-phi3 cs-careerqueen; then
+  echo "    [warmup] model pull budget: ${MODEL_PULL_TIMEOUT_SECONDS}s"
+  if timeout "$MODEL_PULL_TIMEOUT_SECONDS" ollama pull llava-phi3 && ollama cp llava-phi3 cs-careerqueen; then
     ollama rm llava-phi3 || true
   else
-    echo "!! [warmup] llava-phi3 pull/cp failed or timed out -- vision falls through to its own existing fallback."
+    echo "!! [warmup] llava-phi3 pull/cp failed or timed out (budget ${MODEL_PULL_TIMEOUT_SECONDS}s) -- vision falls through to its own existing fallback."
     write_state degraded
     write_reason vision_pull_failed
   fi
@@ -226,7 +258,7 @@ fi
 # on why a 24GB card can't reliably hold this alongside the other 3.
 if [ "${RUN_CS_CAREERADVISOR:-false}" = "true" ] && ! ollama list | grep -q "cs-careeradvisor"; then
   echo "==> [warmup] RUN_CS_CAREERADVISOR=true — pulling aya-expanse:32b for cs-careeradvisor..."
-  if ! (timeout "$NETWORK_OP_TIMEOUT_SECONDS" ollama pull aya-expanse:32b && ollama create cs-careeradvisor -f models/Modelfile.cs-careeradvisor); then
+  if ! (timeout "$MODEL_PULL_TIMEOUT_SECONDS" ollama pull aya-expanse:32b && ollama create cs-careeradvisor -f models/Modelfile.cs-careeradvisor); then
     echo "!! [warmup] cs-careeradvisor pull/create failed or timed out -- opus-tier requests keep falling through to cloud fallback."
   fi
 fi

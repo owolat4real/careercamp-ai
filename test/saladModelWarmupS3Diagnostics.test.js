@@ -205,19 +205,125 @@ test('explicit region: a generic AWS_REGION is honored when AWS_S3_REGION is not
 
 test('S3 timeout: a genuinely hanging download is caught by the (short, test-only) network timeout, not left to run indefinitely, and reaches "degraded" with the timeout reason', () => {
   // Real coreutils `timeout` (fakeRealTimeout left false) actually enforces
-  // WARMUP_NETWORK_TIMEOUT_SECONDS here -- the fake `aws` sleeps far longer
-  // than that budget, proving the script genuinely detects and classifies
-  // a real hang rather than merely a fast non-zero exit.
+  // WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS here -- the fake `aws` sleeps far
+  // longer than that budget, proving the script genuinely detects and
+  // classifies a real hang rather than merely a fast non-zero exit.
   const { result, stateFile, reasonFile, scratch } = runWarmup({
     awsSleepSeconds: 5,
-    extraEnv: { WARMUP_NETWORK_TIMEOUT_SECONDS: '1' },
+    extraEnv: { WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: '1' },
   });
   try {
     assert.equal(result.status, 0, `a timed-out download must not make the script itself fail; stderr: ${result.stderr}`);
     assert.equal(readTrimmed(stateFile), 'degraded');
     assert.equal(readTrimmed(reasonFile), 's3_download_timeout_outer');
+    assert.match(result.stdout, /reason: s3_download_timeout_outer, exit 124, budget 1s/, 'failure line must report the S3 budget actually enforced');
   } finally { cleanup(scratch); }
 }, 20_000);
+
+// S3 restore timeout remediation (2026-09-19) -- a real Salad restore was
+// killed by the old shared 900s cap while a 2.1 GiB download was healthily
+// progressing. The S3 download now has its own budget
+// (WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS, default 3600s), separate from the
+// model-pull budget (WARMUP_MODEL_PULL_TIMEOUT_SECONDS, default 3600s --
+// see test/saladModelWarmupPullTimeout.test.js).
+const BUDGET_LINE = /S3 download budget: (\d+)s/;
+function budgetOf(stdout) {
+  const m = BUDGET_LINE.exec(stdout);
+  return m ? Number(m[1]) : null;
+}
+
+test('S3 timeout budget: defaults to 3600s -- long enough for a 2.1 GiB archive at ~1.25 MiB/s (~29 min), not the old shared 900s', () => {
+  const { result, scratch } = runWarmup({});
+  try {
+    assert.equal(result.status, 0);
+    assert.equal(budgetOf(result.stdout), 3600);
+    // Sanity on the sizing claim itself: worst observed rate finishes with >2x headroom.
+    const worstCaseSeconds = (2.1 * 1024) / 1.25;
+    assert.ok(3600 >= worstCaseSeconds * 2, `3600s must leave >=2x headroom over ${Math.round(worstCaseSeconds)}s`);
+    assert.ok(worstCaseSeconds > 900, 'sanity: the old 900s budget genuinely could not fit this transfer');
+  } finally { cleanup(scratch); }
+});
+
+test('S3 timeout budget: WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS overrides the default', () => {
+  const { result, scratch } = runWarmup({ extraEnv: { WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: '7200' } });
+  try {
+    assert.equal(result.status, 0);
+    assert.equal(budgetOf(result.stdout), 7200);
+  } finally { cleanup(scratch); }
+});
+
+test('S3 timeout budget: zero, empty, negative, zero-padded-zero and non-numeric values fall back to the default -- never an unbounded `timeout 0`', () => {
+  for (const bad of ['0', '00', '', '-5', 'abc', '10s', '1.5', ' ']) {
+    const { result, scratch } = runWarmup({ extraEnv: { WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: bad } });
+    try {
+      assert.equal(result.status, 0, `value ${JSON.stringify(bad)}: ${result.stderr}`);
+      assert.equal(budgetOf(result.stdout), 3600, `value ${JSON.stringify(bad)} must fall back to the bounded default`);
+    } finally { cleanup(scratch); }
+  }
+});
+
+test('S3 timeout budget: leading zeros are read as decimal, not octal', () => {
+  const { result, scratch } = runWarmup({ extraEnv: { WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: '0900' } });
+  try {
+    assert.equal(result.status, 0);
+    assert.equal(budgetOf(result.stdout), 900);
+  } finally { cleanup(scratch); }
+});
+
+test('a slow-but-progressing download that outlasts the shared model-pull budget still completes and reaches "ready"', () => {
+  // The model-pull budget (WARMUP_MODEL_PULL_TIMEOUT_SECONDS) is set to 1s
+  // and the fake aws takes 3s -- if the S3 download were governed by the
+  // pull budget it would be killed (exit 124). With its own budget it must
+  // finish, extract, and reach ready.
+  const { result, stateFile, reasonFile, scratch } = runWarmup({
+    awsSleepSeconds: 3,
+    extraEnv: { WARMUP_MODEL_PULL_TIMEOUT_SECONDS: '1', WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: '30' },
+  });
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readTrimmed(stateFile), 'ready');
+    assert.equal(readTrimmed(reasonFile), null, 'no failure reason on a successful restore');
+    assert.doesNotMatch(result.stdout, /S3 download failed/);
+  } finally { cleanup(scratch); }
+}, 30_000);
+
+test('the timeout stays bounded: a download exceeding the S3 budget is killed at that budget, not left running', () => {
+  const started = Date.now();
+  const { result, stateFile, reasonFile, scratch } = runWarmup({
+    awsSleepSeconds: 20,
+    extraEnv: { WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: '2' },
+  });
+  try {
+    const elapsedMs = Date.now() - started;
+    assert.equal(readTrimmed(stateFile), 'degraded');
+    assert.equal(readTrimmed(reasonFile), 's3_download_timeout_outer');
+    assert.ok(elapsedMs < 15_000, `must be killed near the 2s budget, not run the fake's full 20s (took ${elapsedMs}ms)`);
+    assert.equal(result.status, 0);
+  } finally { cleanup(scratch); }
+}, 30_000);
+
+test('the S3 budget line and failure line never leak bucket, key, or credential values', () => {
+  const { result, scratch } = runWarmup({
+    awsSleepSeconds: 3,
+    extraEnv: { WARMUP_S3_DOWNLOAD_TIMEOUT_SECONDS: '1' },
+  });
+  try {
+    const combined = result.stdout + result.stderr;
+    assert.match(combined, BUDGET_LINE);
+    for (const secret of ['synthetic-test-bucket', 'synthetic_test_key_id', 'synthetic_test_secret_key', 'cs-custom-models-2026-09-03']) {
+      assert.ok(!combined.includes(secret), `output must not contain ${secret}`);
+    }
+  } finally { cleanup(scratch); }
+}, 20_000);
+
+test('the S3 download and the model pulls use separate budgets in the script source', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf8');
+  assert.ok(src.includes('timeout "$S3_DOWNLOAD_TIMEOUT_SECONDS" \\\n'), 'S3 download must use the S3 budget');
+  assert.ok(src.includes('timeout "$MODEL_PULL_TIMEOUT_SECONDS" ollama pull llava-phi3'), 'llava pull must use the pull budget');
+  assert.ok(!src.includes('timeout "$S3_DOWNLOAD_TIMEOUT_SECONDS" ollama pull'), 'pulls must never use the S3 budget');
+  assert.ok(!/timeout "\$MODEL_PULL_TIMEOUT_SECONDS" \\\n\s+aws s3 cp/.test(src), 'S3 download must never use the pull budget');
+  assert.ok(!src.includes('NETWORK_OP_TIMEOUT_SECONDS'), 'the retired shared budget must not linger');
+});
 
 test('S3 command failure: AccessDenied is classified distinctly from a generic failure', () => {
   const { result, stateFile, reasonFile, scratch } = runWarmup({
